@@ -19,6 +19,9 @@ Requires `.env.local`:
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 NEXT_PUBLIC_PLACEHOLDER_USER_ID=   # UUID used instead of real auth
+GOOGLE_CLIENT_ID=                  # from google-calendar-mcp/gcp-oauth.keys.json
+GOOGLE_CLIENT_SECRET=              # from google-calendar-mcp/gcp-oauth.keys.json
+NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
 There is no user authentication. Every DB query hard-codes `PLACEHOLDER_USER_ID` from `lib/supabase.ts`.
@@ -48,14 +51,30 @@ Key invariant: **localStorage is authoritative**. All state mutations write to l
 
 Simple v1: new tasks are placed immediately after the last scheduled task today (or at `now` if the calendar is empty). If no room before 9pm, it schedules for 8am the next day. `scheduled_end = scheduled_start + estimated_minutes`. A proper free-slot algorithm (Phase 4) will replace this.
 
+### Google Calendar integration (`lib/googleCalendar.ts`, `app/api/calendar/`)
+
+OAuth 2.0 flow using `googleapis` package. Credentials live in `google-calendar-mcp/gcp-oauth.keys.json` and are referenced via env vars.
+
+- `GET /api/calendar/oauth` — redirects user to Google consent screen
+- `GET /api/calendar/callback` — receives auth code, stores tokens in `user_tokens`, triggers an immediate sync
+- `GET /api/calendar/status` — returns `{ connected: bool }` by checking for a stored access token
+- `POST /api/calendar/sync` — fetches today's primary calendar events from Google, upserts into `calendar_events`; automatically persists refreshed tokens
+- `GET /api/calendar/events` — returns cached `calendar_events` rows for today, ordered by start time
+
+**Setup checklist before the OAuth flow works:**
+1. Run migration `004_calendar_tables.sql` in the Supabase SQL editor
+2. Add `http://localhost:3000/api/calendar/callback` as an authorized redirect URI in Google Cloud Console
+
 ### Database schema
 
-Three tables in Supabase:
+Five tables in Supabase:
 - **`tasks`** — `title, description, tag, priority, estimated_minutes, actual_duration, deadline, scheduled_start, scheduled_end, status`
 - **`active_timers`** — one row per user (UNIQUE on `user_id`). Upserted on timer start.
 - **`timer_sessions`** — individual work/break segments; bulk-inserted on task completion.
+- **`user_tokens`** — Google OAuth tokens per user (`google_access_token`, `google_refresh_token`, `google_token_expiry`)
+- **`calendar_events`** — read-only cache of Google Calendar events (`google_event_id`, `title`, `start_time`, `end_time`, `is_busy`)
 
-Migrations are in `supabase/migrations/` and must be run manually in the Supabase SQL editor (not via CLI). Run them in order: `001` → `002` → `003`.
+Migrations are in `supabase/migrations/` and must be run manually in the Supabase SQL editor (not via CLI). Run them in order: `001` → `002` → `003` → `004`.
 
 ### Color system
 
@@ -67,6 +86,6 @@ Use `teal-600` / `hover:teal-700` for primary buttons. Use `surface-*` for all n
 
 ## Planned features (not yet implemented)
 
-- **Google Calendar** (Phase 3): OAuth 2.0 `calendar.readonly`, cache events in a `calendar_events` table, display as read-only blocks in `ScheduleView`
+- **Google Calendar display** (Phase 3 remainder): Surface cached `calendar_events` as read-only blocks in `ScheduleView`; wire up the header "Google Calendar" button to trigger the OAuth flow
 - **LLM duration estimation** (Phase 4): OpenAI call when user submits without a manual duration estimate; stored with `llm_estimated = true`
 - **Smart auto-scheduling** (Phase 4): Replace the simple append logic with a real free-slot finder that respects Google Calendar events and deadlines

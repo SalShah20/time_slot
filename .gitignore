@@ -34,3 +34,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# google calendar mcp server (contains oauth credentials, local paths)
+/google-calendar-mcp/
+.mcp.json
