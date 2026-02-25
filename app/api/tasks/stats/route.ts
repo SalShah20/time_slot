@@ -1,11 +1,15 @@
 import { NextResponse } from 'next/server';
-import { supabase, PLACEHOLDER_USER_ID } from '@/lib/supabase';
+import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 
 export async function GET() {
+  const user = await getAuthUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const supabase = createSupabaseServer();
   const { data, error } = await supabase
     .from('tasks')
     .select('status')
-    .eq('user_id', PLACEHOLDER_USER_ID)
+    .eq('user_id', user.id)
     .neq('status', 'cancelled');
 
   if (error) {

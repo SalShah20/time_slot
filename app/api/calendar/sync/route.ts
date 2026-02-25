@@ -1,14 +1,19 @@
 import { NextResponse } from 'next/server';
 import { google } from 'googleapis';
 import { createOAuthClient } from '@/lib/googleCalendar';
-import { supabase, PLACEHOLDER_USER_ID } from '@/lib/supabase';
+import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 
 export async function POST() {
+  const user = await getAuthUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const supabase = createSupabaseServer();
+
   // Load stored tokens
   const { data: tokenRow, error: tokenError } = await supabase
     .from('user_tokens')
     .select('google_access_token, google_refresh_token, google_token_expiry')
-    .eq('user_id', PLACEHOLDER_USER_ID)
+    .eq('user_id', user.id)
     .single();
 
   if (tokenError || !tokenRow?.google_access_token) {
@@ -27,7 +32,7 @@ export async function POST() {
   // Persist refreshed tokens if they changed
   oauth2Client.on('tokens', async (tokens) => {
     await supabase.from('user_tokens').upsert({
-      user_id: PLACEHOLDER_USER_ID,
+      user_id: user.id,
       google_access_token: tokens.access_token ?? tokenRow.google_access_token,
       google_refresh_token: tokens.refresh_token ?? tokenRow.google_refresh_token,
       google_token_expiry: tokens.expiry_date
@@ -56,7 +61,7 @@ export async function POST() {
   const rows = events
     .filter((e) => e.id && (e.start?.dateTime || e.start?.date))
     .map((e) => ({
-      user_id: PLACEHOLDER_USER_ID,
+      user_id: user.id,
       google_event_id: e.id!,
       title: e.summary ?? null,
       start_time: e.start!.dateTime ?? `${e.start!.date}T00:00:00Z`,

@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
-import { supabase, PLACEHOLDER_USER_ID } from '@/lib/supabase';
+import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 
 export async function GET() {
+  const user = await getAuthUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const supabase = createSupabaseServer();
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
   const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
@@ -9,7 +13,7 @@ export async function GET() {
   const { data, error } = await supabase
     .from('calendar_events')
     .select('id, google_event_id, title, start_time, end_time, is_busy')
-    .eq('user_id', PLACEHOLDER_USER_ID)
+    .eq('user_id', user.id)
     .gte('start_time', startOfDay)
     .lt('start_time', endOfDay)
     .order('start_time', { ascending: true });

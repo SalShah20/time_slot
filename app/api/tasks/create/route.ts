@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase, PLACEHOLDER_USER_ID } from '@/lib/supabase';
+import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 /** Find the first available start time for a new task today.
  *  Simple v1: schedule after the last existing task's end time. */
-async function findNextSlot(estimatedMinutes: number): Promise<string> {
+async function findNextSlot(
+  supabase: SupabaseClient,
+  userId: string,
+  estimatedMinutes: number
+): Promise<string> {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 7, 0, 0);
   const todayEnd   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 21, 0, 0);
@@ -11,7 +16,7 @@ async function findNextSlot(estimatedMinutes: number): Promise<string> {
   const { data: todayTasks } = await supabase
     .from('tasks')
     .select('scheduled_start, scheduled_end, estimated_minutes')
-    .eq('user_id', PLACEHOLDER_USER_ID)
+    .eq('user_id', userId)
     .not('status', 'in', '("completed","cancelled")')
     .gte('scheduled_start', todayStart.toISOString())
     .lt('scheduled_start', todayEnd.toISOString())
@@ -46,6 +51,9 @@ async function findNextSlot(estimatedMinutes: number): Promise<string> {
 }
 
 export async function POST(req: NextRequest) {
+  const user = await getAuthUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
   const {
     title,
     description,
@@ -69,7 +77,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const scheduledStart = await findNextSlot(estimatedMinutes);
+  const supabase = createSupabaseServer();
+  const scheduledStart = await findNextSlot(supabase, user.id, estimatedMinutes);
   const scheduledEnd = new Date(
     new Date(scheduledStart).getTime() + estimatedMinutes * 60_000
   ).toISOString();
@@ -77,7 +86,7 @@ export async function POST(req: NextRequest) {
   const { data, error } = await supabase
     .from('tasks')
     .insert({
-      user_id: PLACEHOLDER_USER_ID,
+      user_id: user.id,
       title,
       description: description ?? null,
       tag: tag ?? null,

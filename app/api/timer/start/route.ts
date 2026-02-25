@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase, PLACEHOLDER_USER_ID } from '@/lib/supabase';
+import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 
 export async function POST(req: NextRequest) {
+  const user = await getAuthUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
   const { taskId, startedAt, estimatedMinutes, taskTitle } = await req.json();
 
   if (!taskId || !startedAt || !estimatedMinutes) {
     return NextResponse.json({ error: 'taskId, startedAt, estimatedMinutes are required' }, { status: 400 });
   }
+
+  const supabase = createSupabaseServer();
 
   // Upsert active_timers — ON CONFLICT (user_id) overwrites any existing timer.
   // This enforces the one-active-timer-per-user invariant.
@@ -14,7 +19,7 @@ export async function POST(req: NextRequest) {
     .from('active_timers')
     .upsert(
       {
-        user_id: PLACEHOLDER_USER_ID,
+        user_id: user.id,
         task_id: taskId,
         state: 'WORKING',
         started_at: startedAt,
@@ -46,7 +51,7 @@ export async function POST(req: NextRequest) {
   // Open a work session (ended_at=null means in-progress)
   const { error: sessionError } = await supabase.from('timer_sessions').insert({
     task_id: taskId,
-    user_id: PLACEHOLDER_USER_ID,
+    user_id: user.id,
     type: 'work',
     started_at: startedAt,
     ended_at: null,

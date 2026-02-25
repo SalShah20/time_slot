@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createOAuthClient } from '@/lib/googleCalendar';
-import { supabase, PLACEHOLDER_USER_ID } from '@/lib/supabase';
+import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 
 export async function GET(req: NextRequest) {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3001';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
   const code = req.nextUrl.searchParams.get('code');
   const error = req.nextUrl.searchParams.get('error');
 
@@ -12,15 +12,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${appUrl}?calendar=error`);
   }
 
+  const user = await getAuthUser();
+  if (!user) return NextResponse.redirect(`${appUrl}/login`);
+
   try {
     const oauth2Client = createOAuthClient();
     const { tokens } = await oauth2Client.getToken(code);
+
+    const supabase = createSupabaseServer();
 
     // Store tokens — upsert so reconnecting overwrites old tokens
     const { error: dbError } = await supabase
       .from('user_tokens')
       .upsert({
-        user_id: PLACEHOLDER_USER_ID,
+        user_id: user.id,
         google_access_token: tokens.access_token ?? null,
         google_refresh_token: tokens.refresh_token ?? null,
         google_token_expiry: tokens.expiry_date

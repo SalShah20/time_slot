@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase, PLACEHOLDER_USER_ID } from '@/lib/supabase';
+import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 import type { LocalSession } from '@/types/timer';
 
 export async function POST(req: NextRequest) {
+  const user = await getAuthUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
   // totalBreakSeconds is received but stored implicitly via sessions durations
   const body = await req.json() as {
     taskId: string;
@@ -15,6 +18,8 @@ export async function POST(req: NextRequest) {
   if (!taskId) {
     return NextResponse.json({ error: 'taskId is required' }, { status: 400 });
   }
+
+  const supabase = createSupabaseServer();
 
   // 1. Update task: mark completed + set actual_duration
   const { error: taskError } = await supabase
@@ -34,7 +39,7 @@ export async function POST(req: NextRequest) {
   const { error: deleteError } = await supabase
     .from('active_timers')
     .delete()
-    .eq('user_id', PLACEHOLDER_USER_ID);
+    .eq('user_id', user.id);
 
   if (deleteError) {
     console.error('[/api/timer/complete] delete active_timers', deleteError);
@@ -50,7 +55,7 @@ export async function POST(req: NextRequest) {
       );
       return {
         task_id: taskId,
-        user_id: PLACEHOLDER_USER_ID,
+        user_id: user.id,
         type: s.type,
         started_at: s.startedAt,
         ended_at: endedAt,

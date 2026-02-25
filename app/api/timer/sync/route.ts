@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase, PLACEHOLDER_USER_ID } from '@/lib/supabase';
+import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 
 export async function POST(req: NextRequest) {
+  const user = await getAuthUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
   const body = await req.json();
 
   const {
@@ -15,6 +18,8 @@ export async function POST(req: NextRequest) {
     taskTitle,
   } = body;
 
+  const supabase = createSupabaseServer();
+
   const { error } = await supabase
     .from('active_timers')
     .update({
@@ -27,7 +32,7 @@ export async function POST(req: NextRequest) {
       estimated_minutes: estimatedMinutes,
       task_title: taskTitle ?? '',
     })
-    .eq('user_id', PLACEHOLDER_USER_ID);
+    .eq('user_id', user.id);
 
   if (error) {
     console.error('[/api/timer/sync]', error);
