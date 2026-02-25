@@ -3,7 +3,7 @@
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS description TEXT;
 
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tag TEXT
-  CHECK (tag IN ('Classes', 'Work', 'Personal', 'Other'));
+  CHECK (tag IN ('Study', 'Work', 'Personal', 'Exercise', 'Other'));
 
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority TEXT
   CHECK (priority IN ('low', 'medium', 'high'));

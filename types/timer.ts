@@ -34,7 +34,7 @@ export interface TaskRow {
   user_id: string;
   title: string;
   description: string | null;
-  tag: 'Classes' | 'Work' | 'Personal' | 'Other' | null;
+  tag: 'Study' | 'Work' | 'Personal' | 'Exercise' | 'Other' | null;
   priority: 'low' | 'medium' | 'high' | null;
   estimated_minutes: number;
   actual_duration: number | null;
@@ -84,6 +84,17 @@ export interface CompletionStats {
   estimatedMinutes: number;
   actualWorkSeconds: number;
   totalBreakSeconds: number;
+}
+
+// ─── Calendar blocks (manual + Google) ───────────────────────────────────────
+
+export interface CalendarBlock {
+  id: string;
+  title: string;
+  start_time: string;
+  end_time: string;
+  is_busy: boolean;
+  source: 'manual' | 'google';
 }
 
 // ─── What React components consume ───────────────────────────────────────────

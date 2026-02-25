@@ -5,6 +5,7 @@ import type { TaskRow } from '@/types/timer';
 
 interface Props {
   onTaskCreated: (task: TaskRow) => void;
+  hideHeader?: boolean;
 }
 
 const DURATION_OPTIONS = [
@@ -16,7 +17,7 @@ const DURATION_OPTIONS = [
   { label: 'Custom',  value: 0 },
 ];
 
-type Tag = 'Classes' | 'Work' | 'Personal' | 'Other';
+type Tag = 'Study' | 'Work' | 'Personal' | 'Exercise' | 'Other';
 
 const PRIORITY_OPTIONS = [
   { label: 'Low',    value: 'low',    dot: 'bg-green-500' },
@@ -25,7 +26,7 @@ const PRIORITY_OPTIONS = [
 ] as const;
 type Priority = 'low' | 'medium' | 'high';
 
-export default function TaskForm({ onTaskCreated }: Props) {
+export default function TaskForm({ onTaskCreated, hideHeader = false }: Props) {
   const [title, setTitle]               = useState('');
   const [description, setDescription]   = useState('');
   const [deadline, setDeadline]         = useState('');
@@ -92,10 +93,12 @@ export default function TaskForm({ onTaskCreated }: Props) {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="px-5 py-4 border-b border-surface-200 flex-shrink-0">
-        <h2 className="text-base font-bold text-surface-900">Add New Task</h2>
-        <p className="text-xs text-surface-500 mt-0.5">Auto-schedules into your free time</p>
-      </div>
+      {!hideHeader && (
+        <div className="px-5 py-4 border-b border-surface-200 flex-shrink-0">
+          <h2 className="text-base font-bold text-surface-900">Add New Task</h2>
+          <p className="text-xs text-surface-500 mt-0.5">Auto-schedules into your free time</p>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
         {/* Task Title */}
@@ -150,9 +153,10 @@ export default function TaskForm({ onTaskCreated }: Props) {
             className="w-full px-3 py-2.5 border border-surface-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-surface-900 bg-white"
           >
             <option value="">Select tag…</option>
-            <option value="Classes">📚 Classes</option>
+            <option value="Study">📚 Study</option>
             <option value="Work">💼 Work</option>
             <option value="Personal">🏠 Personal</option>
+            <option value="Exercise">🏃 Exercise</option>
             <option value="Other">📌 Other</option>
           </select>
         </div>

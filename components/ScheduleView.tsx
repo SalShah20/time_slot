@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import type { TaskRow } from '@/types/timer';
+import type { TaskRow, CalendarBlock } from '@/types/timer';
+import AddBlockModal from '@/components/AddBlockModal';
 
 const HOUR_HEIGHT = 64; // px per hour
 const START_HOUR  = 7;  // 7 am
@@ -10,6 +11,10 @@ const END_HOUR    = 21; // 9 pm
 interface Props {
   tasks: TaskRow[];
   loading: boolean;
+  blocks: CalendarBlock[];
+  calendarConnected: boolean;
+  onAddBlock: (block: { title: string; start_time: string; end_time: string }) => Promise<void>;
+  onDeleteBlock: (id: string) => Promise<void>;
 }
 
 function formatHour(h: number): string {
@@ -29,6 +34,11 @@ function topForTime(isoTime: string): number {
 
 function heightForMinutes(minutes: number): number {
   return Math.max(28, (minutes / 60) * HOUR_HEIGHT);
+}
+
+function heightForRange(startIso: string, endIso: string): number {
+  const durationMinutes = (new Date(endIso).getTime() - new Date(startIso).getTime()) / 60_000;
+  return Math.max(28, (durationMinutes / 60) * HOUR_HEIGHT);
 }
 
 function currentTimeTop(): number | null {
@@ -61,7 +71,7 @@ function TaskBlock({ task }: { task: TaskRow }) {
 
   return (
     <div
-      className={`absolute left-14 right-2 rounded-lg border-l-4 px-2.5 py-1.5 overflow-hidden shadow-sm ${bg} ${borderColor}`}
+      className={`absolute left-14 right-2 rounded-lg border-l-4 px-2.5 py-1.5 overflow-hidden shadow-sm z-10 ${bg} ${borderColor}`}
       style={{ top: `${top}px`, height: `${height}px` }}
       title={task.title}
     >
@@ -74,8 +84,50 @@ function TaskBlock({ task }: { task: TaskRow }) {
   );
 }
 
-export default function ScheduleView({ tasks, loading }: Props) {
-  const [timeTop, setTimeTop] = useState<number | null>(currentTimeTop());
+function BlockItem({
+  block,
+  onDelete,
+}: {
+  block: CalendarBlock;
+  onDelete?: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const top    = topForTime(block.start_time);
+  const height = heightForRange(block.start_time, block.end_time);
+
+  const isGoogle = block.source === 'google';
+  const bg     = isGoogle ? 'bg-violet-50 text-violet-900 border-violet-300' : 'bg-indigo-50 text-indigo-900 border-indigo-300';
+
+  return (
+    <div
+      className={`absolute left-14 right-2 rounded-lg border-l-4 px-2.5 py-1.5 overflow-hidden shadow-sm z-[5] opacity-80 ${bg}`}
+      style={{ top: `${top}px`, height: `${height}px` }}
+      title={block.title}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <div className="flex items-start justify-between gap-1">
+        <p className="text-xs font-semibold truncate leading-tight">{block.title}</p>
+        {!isGoogle && hovered && onDelete && (
+          <button
+            onClick={onDelete}
+            className="flex-shrink-0 text-indigo-300 hover:text-red-500 leading-none text-sm font-bold transition-colors"
+            title="Remove block"
+          >
+            ×
+          </button>
+        )}
+      </div>
+      {isGoogle && (
+        <p className="text-xs opacity-50 truncate">Google Calendar</p>
+      )}
+    </div>
+  );
+}
+
+export default function ScheduleView({ tasks, loading, blocks, calendarConnected, onAddBlock, onDeleteBlock }: Props) {
+  const [timeTop, setTimeTop]         = useState<number | null>(currentTimeTop());
+  const [showAddBlock, setShowAddBlock] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -106,6 +158,11 @@ export default function ScheduleView({ tasks, loading }: Props) {
     return ts >= todayStart && ts < todayEnd;
   });
 
+  const todayBlocks = blocks.filter((b) => {
+    const ts = new Date(b.start_time).getTime();
+    return ts >= todayStart && ts < todayEnd;
+  });
+
   return (
     <div className="h-full flex flex-col">
       {/* Date header */}
@@ -120,6 +177,15 @@ export default function ScheduleView({ tasks, loading }: Props) {
               {todayTasks.length} task{todayTasks.length > 1 ? 's' : ''} scheduled
             </span>
           )}
+          <button
+            onClick={() => setShowAddBlock(true)}
+            className="flex items-center gap-1 px-2.5 py-1 border border-surface-200 rounded-lg text-xs font-medium text-surface-600 hover:bg-surface-50 transition-colors"
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            Add Block
+          </button>
         </div>
       </div>
 
@@ -149,7 +215,16 @@ export default function ScheduleView({ tasks, loading }: Props) {
                 );
               })}
 
-              {/* Task blocks */}
+              {/* Calendar blocks (behind tasks) */}
+              {todayBlocks.map((block) => (
+                <BlockItem
+                  key={`${block.source}-${block.id}`}
+                  block={block}
+                  onDelete={() => onDeleteBlock(block.id)}
+                />
+              ))}
+
+              {/* Task blocks (in front) */}
               {todayTasks.map((task) => (
                 <TaskBlock key={task.id} task={task} />
               ))}
@@ -157,7 +232,7 @@ export default function ScheduleView({ tasks, loading }: Props) {
               {/* Current time indicator */}
               {timeTop !== null && (
                 <div
-                  className="absolute left-0 right-0 z-10 pointer-events-none"
+                  className="absolute left-0 right-0 z-20 pointer-events-none"
                   style={{ top: `${timeTop}px` }}
                 >
                   <div className="flex items-center">
@@ -194,20 +269,42 @@ export default function ScheduleView({ tasks, loading }: Props) {
             )}
 
             {/* Empty state */}
-            {todayTasks.length === 0 && unscheduledTasks.length === 0 && (
+            {todayTasks.length === 0 && unscheduledTasks.length === 0 && todayBlocks.length === 0 && (
               <div className="text-center py-16 px-6 text-surface-400">
                 <div className="w-12 h-12 bg-surface-100 rounded-full flex items-center justify-center mx-auto mb-3">
                   <svg className="w-6 h-6 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                   </svg>
                 </div>
-                <p className="text-sm font-medium text-surface-500">No tasks scheduled today</p>
-                <p className="text-xs mt-1">Add a task on the left to get started.</p>
+                {calendarConnected ? (
+                  <>
+                    <p className="text-sm font-medium text-surface-500">No events today</p>
+                    <p className="text-xs mt-1">Add a task to auto-schedule it into your day.</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm font-medium text-surface-500">No tasks scheduled today</p>
+                    <p className="text-xs mt-1">
+                      Add a task to get started, or{' '}
+                      <a href="/api/calendar/oauth" className="text-teal-600 hover:underline">
+                        connect Google Calendar
+                      </a>{' '}
+                      to see your existing schedule.
+                    </p>
+                  </>
+                )}
               </div>
             )}
           </>
         )}
       </div>
+
+      {showAddBlock && (
+        <AddBlockModal
+          onAdd={onAddBlock}
+          onClose={() => setShowAddBlock(false)}
+        />
+      )}
     </div>
   );
 }
