@@ -27,6 +27,7 @@ export default function Home() {
   const [showDrawer, setShowDrawer]               = useState(false);
   const [toast, setToast]                         = useState<string | null>(null);
   const [showUserMenu, setShowUserMenu]           = useState(false);
+  const [selectedDate, setSelectedDate]           = useState(new Date());
 
   const userMenuRef  = useRef<HTMLDivElement>(null);
   const hasSyncedRef = useRef(false);
@@ -58,24 +59,31 @@ export default function Home() {
     const justConnected = params.get('calendar') === 'connected';
     if (justConnected) {
       setCalendarConnected(true);
-      // Clean up URL
       window.history.replaceState({}, '', '/');
+      // Explicitly sync + refresh blocks after OAuth return
+      fetch('/api/calendar/sync', { method: 'POST' })
+        .then(() => fetchBlocks())
+        .catch(() => null);
     }
     fetch('/api/calendar/status')
       .then((r) => r.json())
-      .then((d) => {setCalendarConnected(!!d.connected);})
+      .then((d) => { setCalendarConnected(!!d.connected); })
       .catch(() => null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Sync Google Calendar events ──────────────────────────────────────────────
-  const fetchBlocks = useCallback(async () => {
+  const fetchBlocks = useCallback(async (date?: Date) => {
     try {
-      const res = await fetch('/api/blocks');
+      const d = date ?? selectedDate;
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const res = await fetch(`/api/blocks?date=${dateStr}`);
       if (res.ok) setBlocks(await res.json());
     } catch (err) {
       console.error('[fetchBlocks]', err);
     }
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate]);
 
   const syncCalendar = useCallback(async () => {
     try {
@@ -130,6 +138,12 @@ export default function Home() {
     void fetchTasks();
     void fetchBlocks();
   }, [fetchTasks, fetchBlocks]);
+
+  // Re-fetch blocks when selected date changes
+  useEffect(() => {
+    void fetchBlocks(selectedDate);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate]);
 
   // ── Toast helper ────────────────────────────────────────────────────────────
   const showToast = (msg: string) => {
@@ -363,6 +377,8 @@ export default function Home() {
             loading={loading}
             blocks={blocks}
             calendarConnected={calendarConnected}
+            selectedDate={selectedDate}
+            onDateChange={setSelectedDate}
             onAddBlock={handleAddBlock}
             onDeleteBlock={handleDeleteBlock}
           />

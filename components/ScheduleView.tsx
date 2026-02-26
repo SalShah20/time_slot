@@ -3,13 +3,13 @@
 import { useEffect, useState, useRef } from 'react';
 import type { TaskRow, CalendarBlock } from '@/types/timer';
 import AddBlockModal from '@/components/AddBlockModal';
+import { getTagColor } from '@/lib/tagColors';
 
 const HOUR_HEIGHT = 64; // px per hour
 const START_HOUR  = 7;  // 7 am
 const END_HOUR    = 21; // 9 pm
 
 // ── Column layout algorithm ────────────────────────────────────────────────
-// Assigns non-overlapping columns to events so they render side-by-side.
 
 interface LayoutEntry {
   key: string;
@@ -46,8 +46,6 @@ function assignColumns(entries: LayoutEntry[]): Map<string, { col: number; total
   return result;
 }
 
-// LEFT_OFFSET = left-14 = 3.5rem = 56px (time label area)
-// RIGHT_MARGIN = right-2 = 0.5rem = 8px
 function columnStyle(col: number, totalCols: number): React.CSSProperties {
   if (totalCols <= 1) return {};
   return {
@@ -62,6 +60,8 @@ interface Props {
   loading: boolean;
   blocks: CalendarBlock[];
   calendarConnected: boolean;
+  selectedDate?: Date;
+  onDateChange?: (date: Date) => void;
   onAddBlock: (block: { title: string; start_time: string; end_time: string }) => Promise<void>;
   onDeleteBlock: (id: string) => Promise<void>;
 }
@@ -98,25 +98,29 @@ function currentTimeTop(): number | null {
   return (h - START_HOUR + m / 60) * HOUR_HEIGHT;
 }
 
-const PRIORITY_STRIPE: Record<string, string> = {
-  high:   'border-red-400',
-  medium: 'border-amber-400',
-  low:    'border-green-500',
-};
+function isSameDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth()    === b.getMonth()    &&
+    a.getDate()     === b.getDate()
+  );
+}
 
 function TaskBlock({ task, colStyle }: { task: TaskRow; colStyle?: React.CSSProperties }) {
   const top    = topForTime(task.scheduled_start!);
   const height = heightForMinutes(task.estimated_minutes);
+  const tagColor = getTagColor(task.tag);
 
+  // Status colors take precedence; tag colors apply for pending tasks
   const borderColor =
-    task.status === 'in_progress'
-      ? 'border-amber-400'
-      : task.priority && PRIORITY_STRIPE[task.priority]
-      ? PRIORITY_STRIPE[task.priority]
-      : 'border-teal-400';
+    task.status === 'in_progress' ? 'border-amber-400' :
+    task.status === 'completed'   ? 'border-green-400' :
+    tagColor.border;
 
   const bg =
-    task.status === 'in_progress' ? 'bg-amber-50 text-amber-900' : 'bg-teal-50 text-teal-900';
+    task.status === 'completed'   ? 'bg-green-50 text-green-700 opacity-60' :
+    task.status === 'in_progress' ? 'bg-amber-50 text-amber-900' :
+    `${tagColor.bg} ${tagColor.text}`;
 
   return (
     <div
@@ -127,7 +131,14 @@ function TaskBlock({ task, colStyle }: { task: TaskRow; colStyle?: React.CSSProp
       <p className="text-xs font-semibold truncate leading-tight">{task.title}</p>
       <div className="flex items-center gap-1.5 mt-0.5">
         <p className="text-xs opacity-60">{task.estimated_minutes}m</p>
-        {task.tag && <p className="text-xs opacity-60">· {task.tag}</p>}
+        {task.tag && (
+          <span
+            className="text-xs font-medium px-1.5 py-0.5 rounded-full"
+            style={{ backgroundColor: tagColor.hex + '33', color: tagColor.hex }}
+          >
+            {task.tag}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -147,7 +158,9 @@ function BlockItem({
   const height = heightForRange(block.start_time, block.end_time);
 
   const isGoogle = block.source === 'google';
-  const bg     = isGoogle ? 'bg-violet-50 text-violet-900 border-violet-300' : 'bg-indigo-50 text-indigo-900 border-indigo-300';
+  const bg = isGoogle
+    ? 'bg-violet-50 text-violet-900 border-violet-300'
+    : 'bg-indigo-50 text-indigo-900 border-indigo-300';
 
   return (
     <div
@@ -176,17 +189,35 @@ function BlockItem({
   );
 }
 
-export default function ScheduleView({ tasks, loading, blocks, calendarConnected, onAddBlock, onDeleteBlock }: Props) {
-  const [timeTop, setTimeTop]         = useState<number | null>(currentTimeTop());
+export default function ScheduleView({
+  tasks,
+  loading,
+  blocks,
+  calendarConnected,
+  selectedDate: selectedDateProp,
+  onDateChange,
+  onAddBlock,
+  onDeleteBlock,
+}: Props) {
+  const today = new Date();
+  const selectedDate = selectedDateProp ?? today;
+  const isToday = isSameDay(selectedDate, today);
+
+  const [timeTop, setTimeTop]           = useState<number | null>(isToday ? currentTimeTop() : null);
   const [showAddBlock, setShowAddBlock] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (!isToday) {
+      setTimeTop(null);
+      return;
+    }
+    setTimeTop(currentTimeTop());
     const id = setInterval(() => setTimeTop(currentTimeTop()), 60_000);
     return () => clearInterval(id);
-  }, []);
+  }, [isToday]);
 
-  // Scroll to current time on mount
+  // Scroll to current time on mount (today only)
   useEffect(() => {
     if (gridRef.current && timeTop !== null) {
       gridRef.current.scrollTop = Math.max(0, timeTop - 80);
@@ -197,49 +228,34 @@ export default function ScheduleView({ tasks, loading, blocks, calendarConnected
   const totalHours = END_HOUR - START_HOUR;
   const gridHeight = totalHours * HOUR_HEIGHT;
 
-  const today      = new Date();
-  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-  const todayEnd   = todayStart + 86_400_000;
+  const selectedStart = new Date(
+    selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate()
+  ).getTime();
+  const selectedEnd = selectedStart + 86_400_000;
 
   const scheduledTasks   = tasks.filter((t) => t.scheduled_start !== null);
-  const unscheduledTasks = tasks.filter((t) => t.scheduled_start === null);
+  const unscheduledTasks = isToday ? tasks.filter((t) => t.scheduled_start === null) : [];
 
-  const todayTasks = scheduledTasks.filter((t) => {
+  const viewTasks = scheduledTasks.filter((t) => {
     const ts = new Date(t.scheduled_start!).getTime();
-    return ts >= todayStart && ts < todayEnd;
+    return ts >= selectedStart && ts < selectedEnd;
   });
 
-  const todayBlocks = blocks.filter((b) => {
+  const viewBlocks = blocks.filter((b) => {
     const ts = new Date(b.start_time).getTime();
-    return ts >= todayStart && ts < todayEnd;
+    return ts >= selectedStart && ts < selectedEnd;
   });
 
-  // Debug — remove once calendar is confirmed working
-  if (typeof window !== 'undefined') {
-    console.log('[ScheduleView] blocks prop:', blocks.length, '| todayBlocks:', todayBlocks.length, {
-      todayStart: new Date(todayStart).toISOString(),
-      todayEnd: new Date(todayEnd).toISOString(),
-      blocks: blocks.map((b) => ({
-        id: b.id,
-        title: b.title,
-        start_time: b.start_time,
-        localHour: new Date(b.start_time).getHours(),
-        ts: new Date(b.start_time).getTime(),
-        inRange: new Date(b.start_time).getTime() >= todayStart && new Date(b.start_time).getTime() < todayEnd,
-      })),
-    });
-  }
-
-  // Column layout: combine all timed items and detect overlaps
+  // Column layout: combine tasks + blocks
   const layoutEntries: LayoutEntry[] = [
-    ...todayTasks.map((t) => ({
+    ...viewTasks.map((t) => ({
       key: `task-${t.id}`,
       start: new Date(t.scheduled_start!).getTime(),
       end: t.scheduled_end
         ? new Date(t.scheduled_end).getTime()
         : new Date(t.scheduled_start!).getTime() + t.estimated_minutes * 60_000,
     })),
-    ...todayBlocks.map((b) => ({
+    ...viewBlocks.map((b) => ({
       key: `block-${b.id}`,
       start: new Date(b.start_time).getTime(),
       end: new Date(b.end_time).getTime(),
@@ -247,18 +263,50 @@ export default function ScheduleView({ tasks, loading, blocks, calendarConnected
   ];
   const layout = assignColumns(layoutEntries);
 
+  // Build tomorrow Date for toggle
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
   return (
     <div className="h-full flex flex-col">
       {/* Date header */}
       <div className="flex items-center justify-between px-5 py-3.5 border-b border-surface-200 bg-white flex-shrink-0">
         <div>
-          <h2 className="text-base font-bold text-surface-900">Today&apos;s Schedule</h2>
-          <p className="text-xs text-surface-500">{formatDateHeader(today)}</p>
+          <h2 className="text-base font-bold text-surface-900">
+            {isToday ? "Today's Schedule" : "Tomorrow's Schedule"}
+          </h2>
+          <p className="text-xs text-surface-500">{formatDateHeader(selectedDate)}</p>
         </div>
         <div className="flex items-center gap-2">
-          {todayTasks.length > 0 && (
+          {/* Today / Tomorrow toggle */}
+          {onDateChange && (
+            <div className="flex rounded-lg border border-surface-200 overflow-hidden text-xs font-medium">
+              <button
+                onClick={() => onDateChange(today)}
+                className={`px-3 py-1.5 transition-colors ${
+                  isToday
+                    ? 'bg-teal-600 text-white'
+                    : 'text-surface-600 hover:bg-surface-50'
+                }`}
+              >
+                Today
+              </button>
+              <button
+                onClick={() => onDateChange(tomorrow)}
+                className={`px-3 py-1.5 border-l border-surface-200 transition-colors ${
+                  !isToday
+                    ? 'bg-teal-600 text-white'
+                    : 'text-surface-600 hover:bg-surface-50'
+                }`}
+              >
+                Tomorrow
+              </button>
+            </div>
+          )}
+
+          {viewTasks.length > 0 && (
             <span className="text-xs bg-teal-100 text-teal-700 font-medium px-2 py-0.5 rounded-full">
-              {todayTasks.length} task{todayTasks.length > 1 ? 's' : ''} scheduled
+              {viewTasks.length} task{viewTasks.length > 1 ? 's' : ''} scheduled
             </span>
           )}
           <button
@@ -300,7 +348,7 @@ export default function ScheduleView({ tasks, loading, blocks, calendarConnected
               })}
 
               {/* Calendar blocks (behind tasks) */}
-              {todayBlocks.map((block) => {
+              {viewBlocks.map((block) => {
                 const l = layout.get(`block-${block.id}`);
                 return (
                   <BlockItem
@@ -313,7 +361,7 @@ export default function ScheduleView({ tasks, loading, blocks, calendarConnected
               })}
 
               {/* Task blocks (in front) */}
-              {todayTasks.map((task) => {
+              {viewTasks.map((task) => {
                 const l = layout.get(`task-${task.id}`);
                 return (
                   <TaskBlock
@@ -324,8 +372,8 @@ export default function ScheduleView({ tasks, loading, blocks, calendarConnected
                 );
               })}
 
-              {/* Current time indicator */}
-              {timeTop !== null && (
+              {/* Current time indicator (today only) */}
+              {isToday && timeTop !== null && (
                 <div
                   className="absolute left-0 right-0 z-20 pointer-events-none"
                   style={{ top: `${timeTop}px` }}
@@ -338,7 +386,7 @@ export default function ScheduleView({ tasks, loading, blocks, calendarConnected
               )}
             </div>
 
-            {/* Unscheduled tasks */}
+            {/* Unscheduled tasks (today only) */}
             {unscheduledTasks.length > 0 && (
               <div className="mx-4 mt-6 mb-4">
                 <h3 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3">
@@ -364,7 +412,7 @@ export default function ScheduleView({ tasks, loading, blocks, calendarConnected
             )}
 
             {/* Empty state */}
-            {todayTasks.length === 0 && unscheduledTasks.length === 0 && todayBlocks.length === 0 && (
+            {viewTasks.length === 0 && unscheduledTasks.length === 0 && viewBlocks.length === 0 && (
               <div className="text-center py-16 px-6 text-surface-400">
                 <div className="w-12 h-12 bg-surface-100 rounded-full flex items-center justify-center mx-auto mb-3">
                   <svg className="w-6 h-6 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -373,12 +421,16 @@ export default function ScheduleView({ tasks, loading, blocks, calendarConnected
                 </div>
                 {calendarConnected ? (
                   <>
-                    <p className="text-sm font-medium text-surface-500">No events today</p>
+                    <p className="text-sm font-medium text-surface-500">
+                      No events {isToday ? 'today' : 'tomorrow'}
+                    </p>
                     <p className="text-xs mt-1">Add a task to auto-schedule it into your day.</p>
                   </>
                 ) : (
                   <>
-                    <p className="text-sm font-medium text-surface-500">No tasks scheduled today</p>
+                    <p className="text-sm font-medium text-surface-500">
+                      No tasks scheduled {isToday ? 'today' : 'tomorrow'}
+                    </p>
                     <p className="text-xs mt-1">
                       Add a task to get started, or{' '}
                       <a href="/api/calendar/oauth" className="text-teal-600 hover:underline">

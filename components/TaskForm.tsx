@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { TaskRow } from '@/types/timer';
+import { getTagColor } from '@/lib/tagColors';
 
 interface Props {
   onTaskCreated: (task: TaskRow) => void;
@@ -17,7 +18,7 @@ const DURATION_OPTIONS = [
   { label: 'Custom',  value: 0 },
 ];
 
-type Tag = 'Study' | 'Work' | 'Personal' | 'Exercise' | 'Other';
+const SUGGESTED_TAGS = ['Study', 'Work', 'Personal', 'Exercise', 'Health', 'Social', 'Errands', 'Other'];
 
 const PRIORITY_OPTIONS = [
   { label: 'Low',    value: 'low',    dot: 'bg-green-500' },
@@ -29,8 +30,9 @@ type Priority = 'low' | 'medium' | 'high';
 export default function TaskForm({ onTaskCreated, hideHeader = false }: Props) {
   const [title, setTitle]               = useState('');
   const [description, setDescription]   = useState('');
-  const [deadline, setDeadline]         = useState('');
-  const [tag, setTag]                   = useState<Tag | ''>('');
+  const [deadlineDate, setDeadlineDate] = useState('');
+  const [deadlineTime, setDeadlineTime] = useState('');
+  const [tag, setTag]                   = useState('');
   const [durationValue, setDurationValue] = useState<number>(60);
   const [customMinutes, setCustomMinutes] = useState('');
   const [priority, setPriority]         = useState<Priority>('medium');
@@ -41,14 +43,20 @@ export default function TaskForm({ onTaskCreated, hideHeader = false }: Props) {
   const isCustom = durationValue === 0;
   const estimatedMinutes = isCustom ? parseInt(customMinutes, 10) || 0 : durationValue;
 
+  // Build ISO deadline: date required, time optional (defaults to midnight)
+  function buildDeadline(): string | undefined {
+    if (!deadlineDate) return undefined;
+    const time = deadlineTime || '00:00';
+    return new Date(`${deadlineDate}T${time}:00`).toISOString();
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setSuccess(false);
 
     if (!title.trim())        return setError('Task title is required.');
-    if (!tag)                 return setError('Please select a tag.');
-    if (!deadline)            return setError('Deadline is required.');
+    if (!deadlineDate)        return setError('Deadline date is required.');
     if (estimatedMinutes < 1) return setError('Please enter a valid duration.');
 
     setLoading(true);
@@ -57,12 +65,12 @@ export default function TaskForm({ onTaskCreated, hideHeader = false }: Props) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: title.trim(),
-          description: description.trim() || undefined,
-          tag,
+          title:          title.trim(),
+          description:    description.trim() || undefined,
+          tag:            tag.trim() || undefined,
           estimatedMinutes,
           priority,
-          deadline: deadline ? new Date(deadline).toISOString() : undefined,
+          deadline:       buildDeadline(),
         }),
       });
 
@@ -77,7 +85,8 @@ export default function TaskForm({ onTaskCreated, hideHeader = false }: Props) {
       // Reset form
       setTitle('');
       setDescription('');
-      setDeadline('');
+      setDeadlineDate('');
+      setDeadlineTime('');
       setTag('');
       setDurationValue(60);
       setCustomMinutes('');
@@ -129,36 +138,66 @@ export default function TaskForm({ onTaskCreated, hideHeader = false }: Props) {
           />
         </div>
 
-        {/* Deadline */}
+        {/* Deadline — split into date + optional time */}
         <div>
           <label className="block text-sm font-medium text-surface-700 mb-1">
             Deadline <span className="text-red-400">*</span>
           </label>
-          <input
-            type="datetime-local"
-            value={deadline}
-            onChange={(e) => setDeadline(e.target.value)}
-            className="w-full px-3 py-2.5 border border-surface-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-surface-900"
-          />
+          <div className="flex gap-2">
+            <input
+              type="date"
+              value={deadlineDate}
+              onChange={(e) => setDeadlineDate(e.target.value)}
+              className="flex-1 px-3 py-2.5 border border-surface-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-surface-900"
+            />
+            <input
+              type="time"
+              value={deadlineTime}
+              onChange={(e) => setDeadlineTime(e.target.value)}
+              placeholder="Time (optional)"
+              className="w-32 px-3 py-2.5 border border-surface-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-surface-900"
+            />
+          </div>
+          <p className="text-xs text-surface-400 mt-1">Time defaults to midnight if left blank</p>
         </div>
 
-        {/* Tag */}
+        {/* Tag — freeform with suggestions */}
         <div>
           <label className="block text-sm font-medium text-surface-700 mb-1">
-            Tag <span className="text-red-400">*</span>
+            Tag <span className="text-surface-400 text-xs">(optional)</span>
           </label>
-          <select
+          <input
+            type="text"
             value={tag}
-            onChange={(e) => setTag(e.target.value as Tag | '')}
-            className="w-full px-3 py-2.5 border border-surface-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-surface-900 bg-white"
-          >
-            <option value="">Select tag…</option>
-            <option value="Study">📚 Study</option>
-            <option value="Work">💼 Work</option>
-            <option value="Personal">🏠 Personal</option>
-            <option value="Exercise">🏃 Exercise</option>
-            <option value="Other">📌 Other</option>
-          </select>
+            onChange={(e) => setTag(e.target.value)}
+            placeholder="e.g. Study, Work, or anything…"
+            className="w-full px-3 py-2.5 border border-surface-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-surface-900 placeholder:text-surface-400"
+          />
+          {/* Suggestion pills */}
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {SUGGESTED_TAGS.map((s) => {
+              const color = getTagColor(s);
+              const isActive = tag === s;
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onMouseDown={() => setTag(s)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                    isActive
+                      ? `${color.bg} ${color.text} ${color.border} border`
+                      : 'border-surface-200 text-surface-600 hover:border-surface-300 hover:bg-surface-50'
+                  }`}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: color.hex }}
+                  />
+                  {s}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Estimated Duration */}

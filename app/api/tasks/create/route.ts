@@ -2,75 +2,205 @@ import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 import { createOAuthClient } from '@/lib/googleCalendar';
+import { getTagColor } from '@/lib/tagColors';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-/** Find the first available start time for a new task today.
- *  Respects both existing app tasks AND cached Google Calendar events. */
-async function findNextSlot(
-  supabase: SupabaseClient,
-  userId: string,
-  estimatedMinutes: number
-): Promise<string> {
-  const now = new Date();
+interface BusyInterval {
+  start: Date;
+  end: Date;
+}
+
+/** Simple fallback scheduler — used when LLM is unavailable or errors. */
+function fallbackSchedule(
+  busyIntervals: BusyInterval[],
+  estimatedMinutes: number,
+  deadline?: string | null,
+): { scheduled_start: string; scheduled_end: string } {
+  const now        = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 7, 0, 0);
   const todayEnd   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 21, 0, 0);
 
-  const [{ data: todayTasks }, { data: calEvents }] = await Promise.all([
-    supabase
-      .from('tasks')
-      .select('scheduled_start, scheduled_end, estimated_minutes')
-      .eq('user_id', userId)
-      .not('status', 'in', '("completed","cancelled")')
-      .gte('scheduled_start', todayStart.toISOString())
-      .lt('scheduled_start', todayEnd.toISOString()),
-    supabase
-      .from('calendar_events')
-      .select('start_time, end_time')
-      .eq('user_id', userId)
-      .gte('start_time', todayStart.toISOString())
-      .lt('start_time', todayEnd.toISOString()),
-  ]);
+  const sorted = [...busyIntervals].sort((a, b) => a.start.getTime() - b.start.getTime());
+  let candidate = now > todayStart ? now : todayStart;
 
-  // Build all busy intervals from tasks + Google Calendar events
-  const busyIntervals = [
-    ...(todayTasks ?? []).map((t) => ({
-      start: new Date(t.scheduled_start!),
-      end: t.scheduled_end
-        ? new Date(t.scheduled_end)
-        : new Date(new Date(t.scheduled_start!).getTime() + t.estimated_minutes * 60_000),
-    })),
-    ...(calEvents ?? []).map((e) => ({
-      start: new Date(e.start_time),
-      end: new Date(e.end_time),
-    })),
-  ].sort((a, b) => a.start.getTime() - b.start.getTime());
-
-  // Start candidate: now or 7am, whichever is later
-  let candidateStart = now > todayStart ? now : todayStart;
-
-  // Iteratively push past any overlapping busy interval
+  // Push candidate past any overlapping busy interval
   let changed = true;
   while (changed) {
     changed = false;
-    for (const interval of busyIntervals) {
-      const proposedEnd = new Date(candidateStart.getTime() + estimatedMinutes * 60_000);
-      if (interval.start < proposedEnd && interval.end > candidateStart) {
-        candidateStart = interval.end;
+    for (const iv of sorted) {
+      const end = new Date(candidate.getTime() + estimatedMinutes * 60_000);
+      if (iv.start < end && iv.end > candidate) {
+        candidate = iv.end;
         changed = true;
       }
     }
   }
 
-  // Don't schedule past 9pm — fall back to next morning 8am
+  // Respect deadline
+  if (deadline) {
+    const dl  = new Date(deadline);
+    const end = new Date(candidate.getTime() + estimatedMinutes * 60_000);
+    if (end <= dl) {
+      return { scheduled_start: candidate.toISOString(), scheduled_end: end.toISOString() };
+    }
+    // Fit right before deadline if possible
+    const startBeforeDl = new Date(dl.getTime() - estimatedMinutes * 60_000);
+    if (startBeforeDl > now) {
+      return { scheduled_start: startBeforeDl.toISOString(), scheduled_end: dl.toISOString() };
+    }
+  }
+
+  // Fall back to tomorrow 8am if no slot today before 9pm
   const cutoff = new Date(todayEnd.getTime() - estimatedMinutes * 60_000);
-  if (candidateStart > cutoff) {
+  if (candidate > cutoff) {
     const tomorrow = new Date(now);
     tomorrow.setDate(tomorrow.getDate() + 1);
     tomorrow.setHours(8, 0, 0, 0);
-    candidateStart = tomorrow;
+    candidate = tomorrow;
   }
 
-  return candidateStart.toISOString();
+  return {
+    scheduled_start: candidate.toISOString(),
+    scheduled_end: new Date(candidate.getTime() + estimatedMinutes * 60_000).toISOString(),
+  };
+}
+
+/** LLM-powered smart scheduler using GPT-4o-mini. Falls back to simple scheduling on any error. */
+async function scheduleWithLLM(
+  supabase: SupabaseClient,
+  userId: string,
+  task: {
+    title: string;
+    description?: string;
+    estimatedMinutes: number;
+    tag?: string;
+    deadline?: string;
+    priority?: string;
+  },
+): Promise<{ scheduled_start: string; scheduled_end: string }> {
+  const now        = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+  const twoDaysOut = new Date(todayStart);
+  twoDaysOut.setDate(twoDaysOut.getDate() + 2);
+
+  // Fetch existing schedule context
+  const [{ data: existingTasks }, { data: calEvents }] = await Promise.all([
+    supabase
+      .from('tasks')
+      .select('title, scheduled_start, scheduled_end, estimated_minutes, deadline, priority')
+      .eq('user_id', userId)
+      .not('status', 'in', '("completed","cancelled")')
+      .gte('scheduled_start', todayStart.toISOString())
+      .lt('scheduled_start', twoDaysOut.toISOString()),
+    supabase
+      .from('calendar_events')
+      .select('title, start_time, end_time')
+      .eq('user_id', userId)
+      .gte('start_time', todayStart.toISOString())
+      .lt('start_time', twoDaysOut.toISOString()),
+  ]);
+
+  // Build busy intervals for the fallback
+  const busyIntervals: BusyInterval[] = [
+    ...(existingTasks ?? [])
+      .filter((t) => t.scheduled_start)
+      .map((t) => ({
+        start: new Date(t.scheduled_start!),
+        end: t.scheduled_end
+          ? new Date(t.scheduled_end)
+          : new Date(new Date(t.scheduled_start!).getTime() + t.estimated_minutes * 60_000),
+      })),
+    ...(calEvents ?? []).map((e) => ({
+      start: new Date(e.start_time),
+      end: new Date(e.end_time),
+    })),
+  ];
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    console.warn('[scheduleWithLLM] OPENAI_API_KEY not set — using fallback');
+    return fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline);
+  }
+
+  const localTime = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    weekday: 'short', month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  }).format(now);
+
+  const prompt = `Schedule a task for a college student. Respond ONLY with valid JSON.
+
+TASK: "${task.title}" | ${task.estimatedMinutes} min${task.deadline ? ` | due ${task.deadline}` : ''}${task.priority ? ` | ${task.priority} priority` : ''}
+NOW: ${now.toISOString()} (${localTime})
+
+EXISTING TASKS (today & tomorrow):
+${JSON.stringify(existingTasks ?? [])}
+
+CALENDAR EVENTS (today & tomorrow):
+${JSON.stringify(calEvents ?? [])}
+
+RULES:
+1. Schedule between 7am-9pm unless deadline forces earlier
+2. Task end time MUST be before or at deadline
+3. If deadline is today, schedule ASAP — do not push to tomorrow
+4. Avoid overlapping existing tasks and calendar events
+
+Respond ONLY with this JSON (no extra text):
+{"scheduled_start":"ISO 8601 timestamp","reasoning":"one sentence"}`;
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+        response_format: { type: 'json_object' },
+        max_tokens: 150,
+        temperature: 0.1,
+      }),
+    });
+
+    if (!response.ok) throw new Error(`OpenAI HTTP ${response.status}`);
+
+    const data = await response.json() as { choices: Array<{ message: { content: string } }> };
+    const content = data.choices[0]?.message?.content;
+    if (!content) throw new Error('Empty LLM response');
+
+    const parsed = JSON.parse(content) as { scheduled_start: string; reasoning?: string };
+    console.log('[scheduleWithLLM]', task.title, '→', parsed.scheduled_start, '|', parsed.reasoning ?? '');
+
+    const scheduledStart = new Date(parsed.scheduled_start);
+    if (isNaN(scheduledStart.getTime())) throw new Error('Invalid scheduled_start from LLM');
+
+    let scheduledEnd = new Date(scheduledStart.getTime() + task.estimatedMinutes * 60_000);
+
+    // Safety: never schedule end past deadline
+    if (task.deadline) {
+      const dl = new Date(task.deadline);
+      if (scheduledEnd > dl) {
+        console.warn('[scheduleWithLLM] LLM end exceeds deadline — clamping to deadline');
+        const adjustedStart = new Date(dl.getTime() - task.estimatedMinutes * 60_000);
+        const finalStart    = adjustedStart > now ? adjustedStart : now;
+        scheduledEnd        = new Date(finalStart.getTime() + task.estimatedMinutes * 60_000);
+        return {
+          scheduled_start: finalStart.toISOString(),
+          scheduled_end:   scheduledEnd.toISOString(),
+        };
+      }
+    }
+
+    return {
+      scheduled_start: scheduledStart.toISOString(),
+      scheduled_end:   scheduledEnd.toISOString(),
+    };
+  } catch (err) {
+    console.error('[scheduleWithLLM] Error, falling back to simple scheduler:', err);
+    return fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline);
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -101,21 +231,22 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createSupabaseServer();
-  const scheduledStart = await findNextSlot(supabase, user.id, estimatedMinutes);
-  const scheduledEnd = new Date(
-    new Date(scheduledStart).getTime() + estimatedMinutes * 60_000
-  ).toISOString();
+  const { scheduled_start: scheduledStart, scheduled_end: scheduledEnd } = await scheduleWithLLM(
+    supabase,
+    user.id,
+    { title, description, estimatedMinutes, tag, deadline, priority },
+  );
 
   const baseInsert = {
-    user_id: user.id,
+    user_id:           user.id,
     title,
-    description: description ?? null,
-    tag: tag ?? null,
+    description:       description ?? null,
+    tag:               tag ?? null,
     estimated_minutes: estimatedMinutes,
-    priority: priority ?? null,
-    deadline: deadline ?? null,
-    scheduled_start: scheduledStart,
-    status: 'pending',
+    priority:          priority ?? null,
+    deadline:          deadline ?? null,
+    scheduled_start:   scheduledStart,
+    status:            'pending',
   };
 
   let { data, error } = await supabase
@@ -124,17 +255,15 @@ export async function POST(req: NextRequest) {
     .select('*')
     .single();
 
-  // PGRST204 = column not found in schema cache (migration not yet run).
-  // Fall back to inserting without optional columns so tasks can still be created.
+  // PGRST204 = column not found in schema cache (migration not yet run)
   if (error?.code === 'PGRST204') {
     const missingCol = error.message.match(/the '(\w+)' column/)?.[1];
-    console.warn(`[/api/tasks/create] Column "${missingCol}" missing — run migration 005. Retrying without optional fields.`);
+    console.warn(`[/api/tasks/create] Column "${missingCol}" missing — run latest migration. Retrying without optional fields.`);
     ({ data, error } = await supabase
       .from('tasks')
       .insert(baseInsert)
       .select('id, user_id, title, estimated_minutes, deadline, scheduled_start, status, created_at, updated_at')
       .single());
-    // Attach computed values so the response is complete even without DB columns
     if (data) {
       (data as Record<string, unknown>).scheduled_end = scheduledEnd;
       (data as Record<string, unknown>).description   = description ?? null;
@@ -148,7 +277,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // Try to create a Google Calendar event — non-fatal if it fails
+  // Mirror to Google Calendar — non-fatal if it fails
   try {
     const { data: tokenRow } = await supabase
       .from('user_tokens')
@@ -159,27 +288,27 @@ export async function POST(req: NextRequest) {
     if (tokenRow?.google_access_token) {
       const oauth2Client = createOAuthClient();
       oauth2Client.setCredentials({
-        access_token: tokenRow.google_access_token,
+        access_token:  tokenRow.google_access_token,
         refresh_token: tokenRow.google_refresh_token ?? undefined,
-        expiry_date: tokenRow.google_token_expiry
+        expiry_date:   tokenRow.google_token_expiry
           ? new Date(tokenRow.google_token_expiry).getTime()
           : undefined,
       });
       const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+      const tagColor = getTagColor(tag);
       await calendar.events.insert({
         calendarId: 'primary',
         requestBody: {
-          summary: title,
+          summary:     title,
           description: description ?? '',
-          start: { dateTime: scheduledStart },
-          end: { dateTime: scheduledEnd },
-          colorId: '7', // Peacock (teal)
+          start:       { dateTime: scheduledStart },
+          end:         { dateTime: scheduledEnd },
+          colorId:     tagColor.gcalColorId,
         },
       });
     }
   } catch (err) {
     console.error('[/api/tasks/create] Google Calendar event creation:', err);
-    // Non-fatal — task is already saved
   }
 
   return NextResponse.json(data);

@@ -3,14 +3,23 @@ import { google } from 'googleapis';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 import { createOAuthClient } from '@/lib/googleCalendar';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const user = await getAuthUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const supabase = createSupabaseServer();
-  const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-  const endOfDay   = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
+
+  // Accept optional ?date=YYYY-MM-DD; defaults to today
+  const dateParam = req.nextUrl.searchParams.get('date');
+  let base: Date;
+  if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+    base = new Date(`${dateParam}T00:00:00`);
+  } else {
+    const now = new Date();
+    base = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+  const startOfDay = new Date(base.getFullYear(), base.getMonth(), base.getDate()).toISOString();
+  const endOfDay   = new Date(base.getFullYear(), base.getMonth(), base.getDate() + 1).toISOString();
 
   console.log('[GET /api/blocks] Query range:', { startOfDay, endOfDay, userId: user.id });
 
