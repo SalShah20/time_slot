@@ -23,6 +23,7 @@ export default function Home() {
   const [showTimerSelector, setShowTimerSelector] = useState(false);
   const [timerActive, setTimerActive]             = useState(false);
   const [calendarConnected, setCalendarConnected] = useState(false);
+  const [calendarSyncError, setCalendarSyncError] = useState(false);
   const [showDrawer, setShowDrawer]               = useState(false);
   const [toast, setToast]                         = useState<string | null>(null);
   const [showUserMenu, setShowUserMenu]           = useState(false);
@@ -60,7 +61,7 @@ export default function Home() {
       .catch(() => null);
   }, [router]);
 
-  // ── Sync Google Calendar events once when connected ─────────────────────────
+  // ── Sync Google Calendar events ──────────────────────────────────────────────
   const fetchBlocks = useCallback(async () => {
     try {
       const res = await fetch('/api/blocks');
@@ -70,14 +71,34 @@ export default function Home() {
     }
   }, []);
 
+  const syncCalendar = useCallback(async () => {
+    try {
+      const res = await fetch('/api/calendar/sync', { method: 'POST' });
+      if (res.status === 401) {
+        setCalendarSyncError(true);
+        return;
+      }
+      setCalendarSyncError(false);
+      await fetchBlocks();
+    } catch {
+      // network error — ignore silently
+    }
+  }, [fetchBlocks]);
+
+  // Initial sync when calendar first connects
   useEffect(() => {
     if (calendarConnected && !hasSyncedRef.current) {
       hasSyncedRef.current = true;
-      fetch('/api/calendar/sync', { method: 'POST' })
-        .then(() => fetchBlocks())
-        .catch(() => null);
+      void syncCalendar();
     }
-  }, [calendarConnected, fetchBlocks]);
+  }, [calendarConnected, syncCalendar]);
+
+  // Re-sync every 5 minutes while calendar is connected
+  useEffect(() => {
+    if (!calendarConnected) return;
+    const id = setInterval(() => void syncCalendar(), 5 * 60_000);
+    return () => clearInterval(id);
+  }, [calendarConnected, syncCalendar]);
 
   // ── Timer poll ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -178,13 +199,28 @@ export default function Home() {
         {/* Right controls */}
         <div className="flex items-center gap-3">
           {/* Google Calendar */}
-          {calendarConnected ? (
-            <span className="flex items-center gap-1.5 px-3 py-1.5 border border-teal-200 bg-teal-50 rounded-lg text-xs font-medium text-teal-700">
+          {calendarConnected && !calendarSyncError ? (
+            <button
+              onClick={() => void syncCalendar()}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-teal-200 bg-teal-50 rounded-lg text-xs font-medium text-teal-700 hover:bg-teal-100 transition-colors"
+              title="Click to resync"
+            >
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
-              Google Calendar connected
-            </span>
+              Google Calendar
+            </button>
+          ) : calendarSyncError ? (
+            <a
+              href="/api/calendar/oauth"
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-amber-300 bg-amber-50 rounded-lg text-xs font-medium text-amber-700 hover:bg-amber-100 transition-colors"
+              title="Calendar token expired or missing calendar permission — click to reconnect"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              </svg>
+              Reconnect Calendar
+            </a>
           ) : (
             <a
               href="/api/calendar/oauth"

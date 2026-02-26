@@ -12,7 +12,9 @@ export async function GET() {
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
   const endOfDay   = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
 
-  const [{ data: manual }, { data: google }] = await Promise.all([
+  console.log('[GET /api/blocks] Query range:', { startOfDay, endOfDay, userId: user.id });
+
+  const [{ data: manual, error: manualError }, { data: google, error: googleError }] = await Promise.all([
     supabase
       .from('calendar_blocks')
       .select('id, title, start_time, end_time, is_busy')
@@ -27,9 +29,20 @@ export async function GET() {
       .lt('start_time', endOfDay),
   ]);
 
+  console.log('[GET /api/blocks] Results — manual blocks:', manual?.length ?? 0, 'google events:', google?.length ?? 0);
+  if (manualError) console.error('[GET /api/blocks] calendar_blocks error:', manualError);
+  if (googleError) console.error('[GET /api/blocks] calendar_events error:', googleError);
+
+  // Deduplicate: if a Google Calendar event has the same start time as a manual block,
+  // it was likely mirrored from TimeSlot — exclude it to prevent double-rendering.
+  const manualStartMs = new Set((manual ?? []).map((b) => new Date(b.start_time).getTime()));
+  const deduplicatedGoogle = (google ?? []).filter(
+    (e) => !manualStartMs.has(new Date(e.start_time).getTime())
+  );
+
   const blocks = [
     ...(manual ?? []).map((b) => ({ ...b, source: 'manual' as const })),
-    ...(google  ?? []).map((b) => ({ ...b, source: 'google' as const })),
+    ...deduplicatedGoogle.map((b) => ({ ...b, source: 'google' as const })),
   ].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
 
   return NextResponse.json(blocks);

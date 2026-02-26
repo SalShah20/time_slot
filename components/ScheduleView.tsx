@@ -8,6 +8,55 @@ const HOUR_HEIGHT = 64; // px per hour
 const START_HOUR  = 7;  // 7 am
 const END_HOUR    = 21; // 9 pm
 
+// ── Column layout algorithm ────────────────────────────────────────────────
+// Assigns non-overlapping columns to events so they render side-by-side.
+
+interface LayoutEntry {
+  key: string;
+  start: number; // ms
+  end: number;   // ms
+}
+
+function assignColumns(entries: LayoutEntry[]): Map<string, { col: number; totalCols: number }> {
+  if (entries.length === 0) return new Map();
+
+  const sorted = [...entries].sort((a, b) => a.start - b.start);
+  const colEnds: number[] = [];
+  const colOf = new Map<string, number>();
+
+  for (const ev of sorted) {
+    let c = 0;
+    while (c < colEnds.length && colEnds[c] > ev.start) c++;
+    colEnds[c] = ev.end;
+    colOf.set(ev.key, c);
+  }
+
+  const result = new Map<string, { col: number; totalCols: number }>();
+  for (const ev of sorted) {
+    const myCol = colOf.get(ev.key)!;
+    let maxCol = myCol;
+    for (const other of sorted) {
+      if (other.key !== ev.key && other.start < ev.end && other.end > ev.start) {
+        maxCol = Math.max(maxCol, colOf.get(other.key)!);
+      }
+    }
+    result.set(ev.key, { col: myCol, totalCols: maxCol + 1 });
+  }
+
+  return result;
+}
+
+// LEFT_OFFSET = left-14 = 3.5rem = 56px (time label area)
+// RIGHT_MARGIN = right-2 = 0.5rem = 8px
+function columnStyle(col: number, totalCols: number): React.CSSProperties {
+  if (totalCols <= 1) return {};
+  return {
+    left: `calc(56px + ${col} * (100% - 64px) / ${totalCols})`,
+    right: 'auto',
+    width: `calc((100% - 64px) / ${totalCols} - 4px)`,
+  };
+}
+
 interface Props {
   tasks: TaskRow[];
   loading: boolean;
@@ -55,7 +104,7 @@ const PRIORITY_STRIPE: Record<string, string> = {
   low:    'border-green-500',
 };
 
-function TaskBlock({ task }: { task: TaskRow }) {
+function TaskBlock({ task, colStyle }: { task: TaskRow; colStyle?: React.CSSProperties }) {
   const top    = topForTime(task.scheduled_start!);
   const height = heightForMinutes(task.estimated_minutes);
 
@@ -72,7 +121,7 @@ function TaskBlock({ task }: { task: TaskRow }) {
   return (
     <div
       className={`absolute left-14 right-2 rounded-lg border-l-4 px-2.5 py-1.5 overflow-hidden shadow-sm z-10 ${bg} ${borderColor}`}
-      style={{ top: `${top}px`, height: `${height}px` }}
+      style={{ top: `${top}px`, height: `${height}px`, ...colStyle }}
       title={task.title}
     >
       <p className="text-xs font-semibold truncate leading-tight">{task.title}</p>
@@ -86,9 +135,11 @@ function TaskBlock({ task }: { task: TaskRow }) {
 
 function BlockItem({
   block,
+  colStyle,
   onDelete,
 }: {
   block: CalendarBlock;
+  colStyle?: React.CSSProperties;
   onDelete?: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
@@ -101,7 +152,7 @@ function BlockItem({
   return (
     <div
       className={`absolute left-14 right-2 rounded-lg border-l-4 px-2.5 py-1.5 overflow-hidden shadow-sm z-[5] opacity-80 ${bg}`}
-      style={{ top: `${top}px`, height: `${height}px` }}
+      style={{ top: `${top}px`, height: `${height}px`, ...colStyle }}
       title={block.title}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -163,6 +214,39 @@ export default function ScheduleView({ tasks, loading, blocks, calendarConnected
     return ts >= todayStart && ts < todayEnd;
   });
 
+  // Debug — remove once calendar is confirmed working
+  if (typeof window !== 'undefined') {
+    console.log('[ScheduleView] blocks prop:', blocks.length, '| todayBlocks:', todayBlocks.length, {
+      todayStart: new Date(todayStart).toISOString(),
+      todayEnd: new Date(todayEnd).toISOString(),
+      blocks: blocks.map((b) => ({
+        id: b.id,
+        title: b.title,
+        start_time: b.start_time,
+        localHour: new Date(b.start_time).getHours(),
+        ts: new Date(b.start_time).getTime(),
+        inRange: new Date(b.start_time).getTime() >= todayStart && new Date(b.start_time).getTime() < todayEnd,
+      })),
+    });
+  }
+
+  // Column layout: combine all timed items and detect overlaps
+  const layoutEntries: LayoutEntry[] = [
+    ...todayTasks.map((t) => ({
+      key: `task-${t.id}`,
+      start: new Date(t.scheduled_start!).getTime(),
+      end: t.scheduled_end
+        ? new Date(t.scheduled_end).getTime()
+        : new Date(t.scheduled_start!).getTime() + t.estimated_minutes * 60_000,
+    })),
+    ...todayBlocks.map((b) => ({
+      key: `block-${b.id}`,
+      start: new Date(b.start_time).getTime(),
+      end: new Date(b.end_time).getTime(),
+    })),
+  ];
+  const layout = assignColumns(layoutEntries);
+
   return (
     <div className="h-full flex flex-col">
       {/* Date header */}
@@ -216,18 +300,29 @@ export default function ScheduleView({ tasks, loading, blocks, calendarConnected
               })}
 
               {/* Calendar blocks (behind tasks) */}
-              {todayBlocks.map((block) => (
-                <BlockItem
-                  key={`${block.source}-${block.id}`}
-                  block={block}
-                  onDelete={() => onDeleteBlock(block.id)}
-                />
-              ))}
+              {todayBlocks.map((block) => {
+                const l = layout.get(`block-${block.id}`);
+                return (
+                  <BlockItem
+                    key={`${block.source}-${block.id}`}
+                    block={block}
+                    colStyle={l ? columnStyle(l.col, l.totalCols) : undefined}
+                    onDelete={() => onDeleteBlock(block.id)}
+                  />
+                );
+              })}
 
               {/* Task blocks (in front) */}
-              {todayTasks.map((task) => (
-                <TaskBlock key={task.id} task={task} />
-              ))}
+              {todayTasks.map((task) => {
+                const l = layout.get(`task-${task.id}`);
+                return (
+                  <TaskBlock
+                    key={task.id}
+                    task={task}
+                    colStyle={l ? columnStyle(l.col, l.totalCols) : undefined}
+                  />
+                );
+              })}
 
               {/* Current time indicator */}
               {timeTop !== null && (
