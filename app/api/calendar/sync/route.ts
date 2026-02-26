@@ -43,10 +43,10 @@ export async function POST() {
 
   const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-  // Fetch events for today
+  // Fetch events for today + tomorrow so the tomorrow view is populated
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
+  const endOfDay   = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2).toISOString();
 
   console.log('[/api/calendar/sync] Querying Google Calendar:', { startOfDay, endOfDay, serverDate: now.toISOString() });
 
@@ -121,7 +121,7 @@ export async function POST() {
 
   console.log('[/api/calendar/sync] Rows to upsert:', rows.length);
 
-  // Delete all of today's cached events first so removed events don't linger
+  // Delete cached events for today+tomorrow first so removed events don't linger
   const { error: deleteError } = await supabase
     .from('calendar_events')
     .delete()

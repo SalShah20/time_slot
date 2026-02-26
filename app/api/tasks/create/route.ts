@@ -21,7 +21,9 @@ function fallbackSchedule(
   const todayEnd   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 21, 0, 0);
 
   const sorted = [...busyIntervals].sort((a, b) => a.start.getTime() - b.start.getTime());
-  let candidate = now > todayStart ? now : todayStart;
+  // Add 10-minute buffer from now so tasks don't start immediately
+  const nowPlus10 = new Date(now.getTime() + 10 * 60_000);
+  let candidate = nowPlus10 > todayStart ? nowPlus10 : todayStart;
 
   // Push candidate past any overlapping busy interval
   let changed = true;
@@ -144,6 +146,7 @@ RULES:
 2. Task end time MUST be before or at deadline
 3. If deadline is today, schedule ASAP — do not push to tomorrow
 4. Avoid overlapping existing tasks and calendar events
+5. Start at least 10 minutes from NOW to give the user time to prepare
 
 Respond ONLY with this JSON (no extra text):
 {"scheduled_start":"ISO 8601 timestamp","reasoning":"one sentence"}`;

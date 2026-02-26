@@ -120,7 +120,7 @@ function TaskBlock({ task, colStyle }: { task: TaskRow; colStyle?: React.CSSProp
   const bg =
     task.status === 'completed'   ? 'bg-green-50 text-green-700 opacity-60' :
     task.status === 'in_progress' ? 'bg-amber-50 text-amber-900' :
-    `${tagColor.bg} ${tagColor.text}`;
+    'bg-white text-surface-900';
 
   return (
     <div
@@ -134,7 +134,7 @@ function TaskBlock({ task, colStyle }: { task: TaskRow; colStyle?: React.CSSProp
         {task.tag && (
           <span
             className="text-xs font-medium px-1.5 py-0.5 rounded-full"
-            style={{ backgroundColor: tagColor.hex + '33', color: tagColor.hex }}
+            style={{ backgroundColor: tagColor.hex + '22', color: tagColor.hex }}
           >
             {task.tag}
           </span>

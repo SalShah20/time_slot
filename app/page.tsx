@@ -183,6 +183,18 @@ export default function Home() {
     if (res.ok) setBlocks((prev) => prev.filter((b) => b.id !== id));
   }, []);
 
+  const handleQuickComplete = useCallback(async (taskId: string) => {
+    setTasks((prev) => prev.map((t) => t.id === taskId ? { ...t, status: 'completed' } : t));
+    try {
+      await fetch(`/api/tasks/${taskId}/complete`, { method: 'POST' });
+      setTimeout(() => {
+        setTasks((prev) => prev.filter((t) => t.id !== taskId));
+      }, 600); // brief pause so the checkmark animates before disappearing
+    } catch {
+      void fetchTasks(); // revert on error
+    }
+  }, [fetchTasks]);
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     router.push('/login');
@@ -340,31 +352,60 @@ export default function Home() {
               </div>
             ) : (
               <div className="divide-y divide-surface-100">
-                {upcomingTasks.map((task) => (
-                  <div key={task.id} className="px-5 py-3.5">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-surface-900 truncate">{task.title}</p>
-                        {task.scheduled_start && (
-                          <p className="text-xs text-surface-500 mt-0.5">
-                            {formatTime(task.scheduled_start)}
-                            {task.scheduled_end && ` – ${formatTime(task.scheduled_end)}`}
+                {upcomingTasks.map((task) => {
+                  const isDone = task.status === 'completed';
+                  return (
+                    <div
+                      key={task.id}
+                      className={`px-5 py-3.5 transition-opacity duration-500 ${isDone ? 'opacity-40' : ''}`}
+                    >
+                      <div className="flex items-start gap-2.5">
+                        {/* Checkmark button */}
+                        <button
+                          onClick={() => void handleQuickComplete(task.id)}
+                          disabled={isDone || task.status === 'in_progress'}
+                          title={task.status === 'in_progress' ? 'Stop timer first' : 'Mark complete'}
+                          className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
+                            isDone
+                              ? 'border-green-400 bg-green-400'
+                              : task.status === 'in_progress'
+                              ? 'border-amber-300 cursor-not-allowed'
+                              : 'border-surface-300 hover:border-teal-500 hover:bg-teal-50'
+                          }`}
+                        >
+                          {isDone && (
+                            <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </button>
+
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm font-medium truncate ${isDone ? 'line-through text-surface-400' : 'text-surface-900'}`}>
+                            {task.title}
                           </p>
-                        )}
-                        {task.tag && (
-                          <span className="text-xs text-teal-600 mt-0.5 inline-block">{task.tag}</span>
-                        )}
+                          {task.scheduled_start && (
+                            <p className="text-xs text-surface-500 mt-0.5">
+                              {formatTime(task.scheduled_start)}
+                              {task.scheduled_end && ` – ${formatTime(task.scheduled_end)}`}
+                            </p>
+                          )}
+                          {task.tag && (
+                            <span className="text-xs text-teal-600 mt-0.5 inline-block">{task.tag}</span>
+                          )}
+                        </div>
+
+                        <span className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-medium mt-0.5 ${
+                          task.status === 'in_progress'
+                            ? 'bg-amber-100 text-amber-700'
+                            : 'bg-surface-100 text-surface-600'
+                        }`}>
+                          {task.status === 'in_progress' ? 'Active' : 'Pending'}
+                        </span>
                       </div>
-                      <span className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-medium mt-0.5 ${
-                        task.status === 'in_progress'
-                          ? 'bg-amber-100 text-amber-700'
-                          : 'bg-surface-100 text-surface-600'
-                      }`}>
-                        {task.status === 'in_progress' ? 'Active' : 'Pending'}
-                      </span>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
