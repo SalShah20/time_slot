@@ -121,16 +121,29 @@ export async function POST() {
 
   console.log('[/api/calendar/sync] Rows to upsert:', rows.length);
 
-  if (rows.length > 0) {
-    const { error: upsertError } = await supabase
-      .from('calendar_events')
-      .upsert(rows, { onConflict: 'user_id,google_event_id' });
+  // Delete all of today's cached events first so removed events don't linger
+  const { error: deleteError } = await supabase
+    .from('calendar_events')
+    .delete()
+    .eq('user_id', user.id)
+    .gte('start_time', startOfDay)
+    .lt('start_time', endOfDay);
 
-    if (upsertError) {
-      console.error('[/api/calendar/sync] upsert error:', upsertError);
+  if (deleteError) {
+    console.error('[/api/calendar/sync] delete error:', deleteError);
+    return NextResponse.json({ error: 'Failed to clear stale events' }, { status: 500 });
+  }
+
+  if (rows.length > 0) {
+    const { error: insertError } = await supabase
+      .from('calendar_events')
+      .insert(rows);
+
+    if (insertError) {
+      console.error('[/api/calendar/sync] insert error:', insertError);
       return NextResponse.json({ error: 'Failed to cache events' }, { status: 500 });
     }
-    console.log('[/api/calendar/sync] Upsert succeeded');
+    console.log('[/api/calendar/sync] Insert succeeded');
   }
 
   return NextResponse.json({ synced: rows.length });

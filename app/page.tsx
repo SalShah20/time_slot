@@ -33,7 +33,12 @@ export default function Home() {
 
   // ── Auth ────────────────────────────────────────────────────────────────────
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setUser(data.user));
+    // getSession() returns the cached session with full user_metadata (avatar_url, etc.)
+    supabase.auth.getSession().then(({ data }) => setUser(data.session?.user ?? null));
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+    return () => subscription.unsubscribe();
   }, []);
 
   // Close user menu on outside click
@@ -50,16 +55,17 @@ export default function Home() {
   // ── Calendar status ─────────────────────────────────────────────────────────
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('calendar') === 'connected') {
+    const justConnected = params.get('calendar') === 'connected';
+    if (justConnected) {
       setCalendarConnected(true);
-      router.replace('/');
-      return;
+      // Clean up URL
+      window.history.replaceState({}, '', '/');
     }
     fetch('/api/calendar/status')
       .then((r) => r.json())
-      .then((d) => setCalendarConnected(!!d.connected))
+      .then((d) => {setCalendarConnected(!!d.connected);})
       .catch(() => null);
-  }, [router]);
+  }, []);
 
   // ── Sync Google Calendar events ──────────────────────────────────────────────
   const fetchBlocks = useCallback(async () => {
