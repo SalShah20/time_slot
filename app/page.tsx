@@ -94,9 +94,20 @@ export default function Home() {
       }
       setCalendarSyncError(false);
       await fetchBlocks();
+
+      // After syncing, reschedule any pending tasks that now conflict with calendar events
+      const rescheduleRes = await fetch('/api/tasks/reschedule', { method: 'POST' });
+      if (rescheduleRes.ok) {
+        const { rescheduled } = await rescheduleRes.json() as { rescheduled: number };
+        if (rescheduled > 0) {
+          await fetchTasks();
+          showToast(`${rescheduled} task${rescheduled !== 1 ? 's' : ''} rescheduled to avoid calendar conflicts`);
+        }
+      }
     } catch {
       // network error — ignore silently
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchBlocks]);
 
   // Initial sync when calendar first connects

@@ -6,8 +6,8 @@ import AddBlockModal from '@/components/AddBlockModal';
 import { getTagColor } from '@/lib/tagColors';
 
 const HOUR_HEIGHT = 64; // px per hour
-const START_HOUR  = 7;  // 7 am
-const END_HOUR    = 21; // 9 pm
+const START_HOUR  = 0;  // 12 am
+const END_HOUR    = 24; // 12 am (next day)
 
 // ── Column layout algorithm ────────────────────────────────────────────────
 
@@ -67,7 +67,7 @@ interface Props {
 }
 
 function formatHour(h: number): string {
-  if (h === 0)  return '12am';
+  if (h === 0 || h === 24) return '12am';
   if (h === 12) return '12pm';
   return h < 12 ? `${h}am` : `${h - 12}pm`;
 }

@@ -3,69 +3,9 @@ import { google } from 'googleapis';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 import { createOAuthClient } from '@/lib/googleCalendar';
 import { getTagColor } from '@/lib/tagColors';
+import { fallbackSchedule } from '@/lib/scheduleUtils';
+import type { BusyInterval } from '@/lib/scheduleUtils';
 import type { SupabaseClient } from '@supabase/supabase-js';
-
-interface BusyInterval {
-  start: Date;
-  end: Date;
-}
-
-/** Simple fallback scheduler — used when LLM is unavailable or errors. */
-function fallbackSchedule(
-  busyIntervals: BusyInterval[],
-  estimatedMinutes: number,
-  deadline?: string | null,
-): { scheduled_start: string; scheduled_end: string } {
-  const now        = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 7, 0, 0);
-  const todayEnd   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 21, 0, 0);
-
-  const sorted = [...busyIntervals].sort((a, b) => a.start.getTime() - b.start.getTime());
-  // Add 10-minute buffer from now so tasks don't start immediately
-  const nowPlus10 = new Date(now.getTime() + 10 * 60_000);
-  let candidate = nowPlus10 > todayStart ? nowPlus10 : todayStart;
-
-  // Push candidate past any overlapping busy interval
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const iv of sorted) {
-      const end = new Date(candidate.getTime() + estimatedMinutes * 60_000);
-      if (iv.start < end && iv.end > candidate) {
-        candidate = iv.end;
-        changed = true;
-      }
-    }
-  }
-
-  // Respect deadline
-  if (deadline) {
-    const dl  = new Date(deadline);
-    const end = new Date(candidate.getTime() + estimatedMinutes * 60_000);
-    if (end <= dl) {
-      return { scheduled_start: candidate.toISOString(), scheduled_end: end.toISOString() };
-    }
-    // Fit right before deadline if possible
-    const startBeforeDl = new Date(dl.getTime() - estimatedMinutes * 60_000);
-    if (startBeforeDl > now) {
-      return { scheduled_start: startBeforeDl.toISOString(), scheduled_end: dl.toISOString() };
-    }
-  }
-
-  // Fall back to tomorrow 8am if no slot today before 9pm
-  const cutoff = new Date(todayEnd.getTime() - estimatedMinutes * 60_000);
-  if (candidate > cutoff) {
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(8, 0, 0, 0);
-    candidate = tomorrow;
-  }
-
-  return {
-    scheduled_start: candidate.toISOString(),
-    scheduled_end: new Date(candidate.getTime() + estimatedMinutes * 60_000).toISOString(),
-  };
-}
 
 /** LLM-powered smart scheduler using GPT-4o-mini. Falls back to simple scheduling on any error. */
 async function scheduleWithLLM(
