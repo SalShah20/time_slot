@@ -16,7 +16,7 @@ export function fallbackSchedule(
 ): { scheduled_start: string; scheduled_end: string } {
   const now        = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 7, 0, 0);
-  const todayEnd   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 21, 0, 0);
+  const todayEnd   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 0, 0);
 
   const sorted = [...busyIntervals].sort((a, b) => a.start.getTime() - b.start.getTime());
   const nowPlus10 = new Date(now.getTime() + 10 * 60_000);

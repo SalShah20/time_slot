@@ -6,8 +6,8 @@ import AddBlockModal from '@/components/AddBlockModal';
 import { getTagColor } from '@/lib/tagColors';
 
 const HOUR_HEIGHT = 64; // px per hour
-const START_HOUR  = 0;  // 12 am
-const END_HOUR    = 24; // 12 am (next day)
+const START_HOUR  = 6;  // 6 am — no tasks scheduled before this
+const END_HOUR    = 24; // midnight
 
 // ── Column layout algorithm ────────────────────────────────────────────────
 
@@ -231,7 +231,7 @@ export default function ScheduleView({
     )[0];
     gridRef.current.scrollTop = firstTask
       ? Math.max(0, topForTime(firstTask.scheduled_start!) - 80)
-      : 8 * HOUR_HEIGHT; // default 8 AM
+      : (8 - START_HOUR) * HOUR_HEIGHT; // default 8 AM
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDateKey]);
 

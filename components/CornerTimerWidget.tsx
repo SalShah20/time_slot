@@ -113,7 +113,7 @@ export default function CornerTimerWidget({ onComplete, onTimerFinish }: Props) 
     timerState === 'PAUSED'  ? 'Paused'  : 'On Break';
 
   return (
-    <div className="fixed bottom-6 right-6 z-40 w-72 bg-white rounded-2xl shadow-2xl border border-surface-200 p-4">
+    <div className="fixed bottom-6 max-md:bottom-20 right-6 z-40 w-72 max-md:w-[calc(100vw-3rem)] bg-white rounded-2xl shadow-2xl border border-surface-200 p-4">
       {/* Status row */}
       <div className="flex items-center gap-2 mb-2">
         <StateDot state={timerState} />

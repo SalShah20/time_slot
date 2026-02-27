@@ -50,17 +50,18 @@ Floating overlays:
 - `CornerTimerWidget` — active timer controls (renders `null` when idle)
 - `TimerSelector` — modal task picker (opens from "Start Timer")
 - `CompletionPopup` — post-completion stats
-- `TaskDrawer` — slide-up drawer with `TaskForm` (single or batch mode)
+- `TaskDrawer` — slide-up drawer; **batch mode is the default** (resets to batch on every close)
+- `OnboardingTooltip` — first-visit tooltip (localStorage key `ts_onboarding_seen`; shown after 1.5s)
 
 ### LLM Auto-scheduling (`app/api/tasks/create/route.ts`, `lib/scheduleUtils.ts`)
 
 New tasks are scheduled via `scheduleWithLLM()`:
 1. Fetches existing tasks + Google Calendar events for today + tomorrow as context
-2. Calls GPT-4o-mini with a structured prompt (rules: 7am–9pm, no overlaps, respect deadlines, start ≥10 min from now)
+2. Calls GPT-4o-mini with a structured prompt (rules: 7am–midnight, no overlaps, respect deadlines, start ≥10 min from now)
 3. **Validates** the LLM result against `busyIntervals` — if the result overlaps anything, it falls back automatically
 4. Falls back to `fallbackSchedule()` (deterministic free-slot finder) if: API key missing, LLM errors, or overlap detected
 
-`fallbackSchedule()` in `lib/scheduleUtils.ts`: sorts busy intervals, walks forward from now+10min to find the first gap, falls back to 8am tomorrow if no slot before 9pm.
+`fallbackSchedule()` in `lib/scheduleUtils.ts`: sorts busy intervals, walks forward from now+10min to find the first gap, falls back to 8am tomorrow if no slot before 11pm (extended window for students working late).
 
 ### Batch Scheduling (`app/api/tasks/batch-create/route.ts`, `components/TaskDrawer.tsx`)
 
@@ -190,6 +191,32 @@ Use `teal-600` / `hover:teal-700` for primary buttons. Use `surface-*` for all n
 | `components/CornerTimerWidget.tsx` | Floating active timer display |
 | `components/TimerSelector.tsx` | Modal to pick which task to time |
 | `types/timer.ts` | Shared TypeScript interfaces (`TaskRow`, `TimerDisplayState`, etc.) |
+
+## PWA
+
+Configured via `@ducanh2912/next-pwa` in `next.config.mjs`:
+- Service worker auto-generated to `public/sw.js` on build (disabled in dev)
+- Manifest at `public/manifest.json` (theme `#027381`)
+- SVG icon at `public/icon.svg` — **replace with actual PNG files** (`public/icon-192.png`, `public/icon-512.png`) for iOS and Android home-screen install; use [pwabuilder.com](https://www.pwabuilder.com/imageGenerator) to generate all sizes
+- `components/InstallPrompt.tsx` — listens to `beforeinstallprompt`, renders a dismiss-able banner (stored in `ts_install_dismissed` localStorage key); hidden when already running as standalone
+- `app/layout.tsx` exports `viewport` (themeColor, no user scaling) and `metadata.manifest`
+
+## Mobile layout
+
+`app/page.tsx` is responsive:
+- **Desktop (md+):** two-column layout — 288px task list on left, schedule view on right
+- **Mobile (< md):** single-column with tab switcher (`mobileView` state: `'tasks'` | `'schedule'`)
+- **Tab bar** (`md:hidden`) renders as part of the flex column (not fixed) at the bottom of the screen
+- **FAB** is `bottom-6 max-md:bottom-20` (no timer) or `bottom-52 max-md:bottom-[17rem]` (timer active) to clear tab bar
+- **CornerTimerWidget** is `bottom-6 max-md:bottom-20` and `w-72 max-md:w-[calc(100vw-3rem)]` on mobile
+
+## LLM duration estimation
+
+`lib/estimateDuration.ts` exports `estimateDurationWithLLM(title, description, tag, priority)`:
+- Calls GPT-4o-mini to estimate minutes; falls back to tag-based defaults if API key missing or call fails
+- Called by both `api/tasks/create` and `api/tasks/batch-create` when `estimatedMinutes` is absent
+- In `TaskForm.tsx` the first duration option is **"AI Estimate"** (value `-1`); when selected, `estimatedMinutes` is sent as `undefined` and the server estimates it
+- Queue list in `TaskDrawer` shows "AI estimate" label for tasks without a manual duration
 
 ## Planned / future work
 

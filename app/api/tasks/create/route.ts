@@ -5,6 +5,7 @@ import { getTagColor } from '@/lib/tagColors';
 import { fallbackSchedule } from '@/lib/scheduleUtils';
 import type { BusyInterval } from '@/lib/scheduleUtils';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { estimateDurationWithLLM } from '@/lib/estimateDuration';
 
 /** LLM-powered smart scheduler using GPT-4o-mini. Falls back to simple scheduling on any error. */
 async function scheduleWithLLM(
@@ -81,11 +82,13 @@ CALENDAR EVENTS (today & tomorrow):
 ${JSON.stringify(calEvents ?? [])}
 
 RULES:
-1. Schedule between 7am-9pm unless deadline forces earlier
+1. Try to schedule between 7am and midnight, but if the deadline is sooner, make it ASAP. It is ok to schedule past midnight but only if completely necessary, and there are no other open slots.
 2. Task end time MUST be before or at deadline
 3. If deadline is today, schedule ASAP — do not push to tomorrow
 4. Avoid overlapping existing tasks and calendar events
 5. Start at least 10 minutes from NOW to give the user time to prepare
+6. If there is no estimated duration, estimate based on the task name, description, similar tasks, and tags
+7. If multiple valid slots, pick the earliest one
 
 Respond ONLY with this JSON (no extra text):
 {"scheduled_start":"ISO 8601 timestamp","reasoning":"one sentence"}`;
@@ -176,18 +179,22 @@ export async function POST(req: NextRequest) {
     deadline?: string;
   };
 
-  if (!title || !estimatedMinutes) {
+  if (!title) {
     return NextResponse.json(
-      { error: 'title and estimatedMinutes are required' },
+      { error: 'title is required' },
       { status: 400 }
     );
   }
 
   const supabase = createSupabaseServer();
+
+  // If no duration supplied, ask the LLM to estimate it
+  const finalEstimatedMinutes = estimatedMinutes || await estimateDurationWithLLM(title, description, tag, priority);
+
   const { scheduled_start: scheduledStart, scheduled_end: scheduledEnd } = await scheduleWithLLM(
     supabase,
     user.id,
-    { title, description, estimatedMinutes, tag, deadline, priority },
+    { title, description, estimatedMinutes: finalEstimatedMinutes, tag, deadline, priority },
   );
 
   const baseInsert = {
@@ -195,7 +202,7 @@ export async function POST(req: NextRequest) {
     title,
     description:       description ?? null,
     tag:               tag ?? null,
-    estimated_minutes: estimatedMinutes,
+    estimated_minutes: finalEstimatedMinutes,
     priority:          priority ?? null,
     deadline:          deadline ?? null,
     scheduled_start:   scheduledStart,

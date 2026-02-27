@@ -4,6 +4,7 @@ import { getCalendarClient } from '@/lib/googleCalendar';
 import { getTagColor } from '@/lib/tagColors';
 import { fallbackSchedule } from '@/lib/scheduleUtils';
 import type { BusyInterval } from '@/lib/scheduleUtils';
+import { estimateDurationWithLLM } from '@/lib/estimateDuration';
 
 interface TaskInput {
   title: string;
@@ -58,11 +59,12 @@ EXISTING BUSY INTERVALS (tasks + calendar events):
 ${JSON.stringify(busyForPrompt)}
 
 RULES:
-1. Schedule between 7am-9pm unless deadline forces earlier
+1. Try to schedule between 7am and midnight; if a deadline is sooner, schedule ASAP
 2. Each task's end time MUST be before or at its deadline
 3. Tasks due sooner should generally be scheduled sooner
 4. No overlaps between tasks being scheduled, or with existing busy intervals
 5. Start at least 10 minutes from NOW
+6. If multiple valid slots for a task, pick the earliest one
 
 Respond ONLY with a JSON array (no extra text):
 [{"index":0,"scheduled_start":"ISO 8601 timestamp"},{"index":1,"scheduled_start":"ISO 8601 timestamp"}]`;
@@ -188,12 +190,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'tasks array is required' }, { status: 400 });
   }
   for (const t of tasks) {
-    if (!t.title || !t.estimatedMinutes) {
-      return NextResponse.json({ error: 'Each task requires title and estimatedMinutes' }, { status: 400 });
+    if (!t.title) {
+      return NextResponse.json({ error: 'Each task requires a title' }, { status: 400 });
     }
   }
 
   const supabase = createSupabaseServer();
+
+  // Fill in missing durations via LLM (parallel to keep batch fast)
+  const tasksWithDurations = await Promise.all(
+    tasks.map(async (t) => {
+      if (t.estimatedMinutes) return t;
+      const estimated = await estimateDurationWithLLM(t.title, t.description, t.tag, t.priority);
+      return { ...t, estimatedMinutes: estimated };
+    }),
+  );
   const now        = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
   const twoDaysOut = new Date(todayStart);
@@ -232,7 +243,7 @@ export async function POST(req: NextRequest) {
   ];
 
   // Schedule all tasks together (one LLM call)
-  const scheduled = await scheduleBatchWithLLM(tasks, existingBusy);
+  const scheduled = await scheduleBatchWithLLM(tasksWithDurations, existingBusy);
 
   // Bulk insert all tasks
   const rows = scheduled.map((t) => ({

@@ -9,7 +9,8 @@ export interface TaskInput {
   title: string;
   description?: string;
   tag?: string;
-  estimatedMinutes: number;
+  /** Omit to let the server LLM estimate the duration */
+  estimatedMinutes?: number;
   priority: string;
   deadline?: string;
 }
@@ -22,12 +23,13 @@ interface Props {
 }
 
 const DURATION_OPTIONS = [
-  { label: '30 min',  value: 30 },
-  { label: '1 hour',  value: 60 },
-  { label: '2 hours', value: 120 },
-  { label: '3 hours', value: 180 },
-  { label: '4 hours', value: 240 },
-  { label: 'Custom',  value: 0 },
+  { label: 'AI Estimate', value: -1 },
+  { label: '30 min',      value: 30 },
+  { label: '1 hour',      value: 60 },
+  { label: '2 hours',     value: 120 },
+  { label: '3 hours',     value: 180 },
+  { label: '4 hours',     value: 240 },
+  { label: 'Custom',      value: 0 },
 ];
 
 const SUGGESTED_TAGS = ['Study', 'Work', 'Personal', 'Exercise', 'Health', 'Social', 'Errands', 'Other'];
@@ -45,7 +47,7 @@ export default function TaskForm({ onTaskCreated, hideHeader = false, onQueue }:
   const [deadlineDate, setDeadlineDate] = useState('');
   const [deadlineTime, setDeadlineTime] = useState('');
   const [tag, setTag]                   = useState('');
-  const [durationValue, setDurationValue] = useState<number>(60);
+  const [durationValue, setDurationValue] = useState<number>(-1);
   const [customMinutes, setCustomMinutes] = useState('');
   const [priority, setPriority]         = useState<Priority>('medium');
   const [loading, setLoading]           = useState(false);
@@ -55,8 +57,9 @@ export default function TaskForm({ onTaskCreated, hideHeader = false, onQueue }:
 
   useEffect(() => { setCustomTags(getUserTags()); }, []);
 
+  const isAiEstimate = durationValue === -1;
   const isCustom = durationValue === 0;
-  const estimatedMinutes = isCustom ? parseInt(customMinutes, 10) || 0 : durationValue;
+  const estimatedMinutes = isCustom ? parseInt(customMinutes, 10) || 0 : isAiEstimate ? 0 : durationValue;
   const isQueueMode = !!onQueue;
 
   // Build ISO deadline: date required, time optional (defaults to midnight)
@@ -83,9 +86,9 @@ export default function TaskForm({ onTaskCreated, hideHeader = false, onQueue }:
     setError(null);
     setSuccess(false);
 
-    if (!title.trim())        return setError('Task title is required.');
-    if (!deadlineDate)        return setError('Deadline date is required.');
-    if (estimatedMinutes < 1) return setError('Please enter a valid duration.');
+    if (!title.trim())                             return setError('Task title is required.');
+    if (!deadlineDate)                             return setError('Deadline date is required.');
+    if (!isAiEstimate && estimatedMinutes < 1)     return setError('Please enter a valid duration.');
 
     // Queue mode: collect data without API call
     if (isQueueMode) {
@@ -94,12 +97,12 @@ export default function TaskForm({ onTaskCreated, hideHeader = false, onQueue }:
         setCustomTags(getUserTags());
       }
       onQueue({
-        title:          title.trim(),
-        description:    description.trim() || undefined,
-        tag:            tag.trim() || undefined,
-        estimatedMinutes,
+        title:           title.trim(),
+        description:     description.trim() || undefined,
+        tag:             tag.trim() || undefined,
+        estimatedMinutes: isAiEstimate ? undefined : estimatedMinutes,
         priority,
-        deadline:       buildDeadline(),
+        deadline:        buildDeadline(),
       });
       resetForm();
       setSuccess(true);
@@ -113,12 +116,12 @@ export default function TaskForm({ onTaskCreated, hideHeader = false, onQueue }:
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title:          title.trim(),
-          description:    description.trim() || undefined,
-          tag:            tag.trim() || undefined,
-          estimatedMinutes,
+          title:            title.trim(),
+          description:      description.trim() || undefined,
+          tag:              tag.trim() || undefined,
+          estimatedMinutes: isAiEstimate ? undefined : estimatedMinutes,
           priority,
-          deadline:       buildDeadline(),
+          deadline:         buildDeadline(),
         }),
       });
 
@@ -283,6 +286,11 @@ export default function TaskForm({ onTaskCreated, hideHeader = false, onQueue }:
               </option>
             ))}
           </select>
+          {isAiEstimate && (
+            <p className="mt-1 text-xs text-teal-600">
+              AI will estimate based on your task title and description
+            </p>
+          )}
           {isCustom && (
             <input
               type="number"

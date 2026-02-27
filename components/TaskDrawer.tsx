@@ -12,7 +12,7 @@ interface Props {
 }
 
 export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreated }: Props) {
-  const [batchMode, setBatchMode]     = useState(false);
+  const [batchMode, setBatchMode]     = useState(true);
   const [queue, setQueue]             = useState<TaskInput[]>([]);
   const [submitting, setSubmitting]   = useState(false);
   const [batchError, setBatchError]   = useState<string | null>(null);
@@ -24,10 +24,10 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
     return () => document.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  // Reset batch state when drawer closes
+  // Reset batch state when drawer closes (keep batch mode as default)
   useEffect(() => {
     if (!open) {
-      setBatchMode(false);
+      setBatchMode(true);
       setQueue([]);
       setBatchError(null);
     }
@@ -119,9 +119,9 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
                   ? 'border-teal-500 bg-teal-50 text-teal-700'
                   : 'border-surface-200 text-surface-500 hover:border-surface-300 hover:bg-surface-50'
               }`}
-              title={batchMode ? 'Switch to single task mode' : 'Switch to batch mode'}
+              title={batchMode ? 'Switch to quick-add (schedules one task immediately)' : 'Switch to batch mode (queue tasks, schedule all at once)'}
             >
-              {batchMode ? 'Batch On' : 'Batch'}
+              {batchMode ? 'Queue Mode' : 'Quick Add'}
             </button>
             <button
               onClick={onClose}
@@ -141,7 +141,7 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-surface-900 truncate">{task.title}</p>
                   <p className="text-xs text-surface-500">
-                    {formatDuration(task.estimatedMinutes)}
+                    {task.estimatedMinutes ? formatDuration(task.estimatedMinutes) : 'AI estimate'}
                     {task.tag && ` · ${task.tag}`}
                     {task.deadline && ` · due ${new Date(task.deadline).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
                   </p>

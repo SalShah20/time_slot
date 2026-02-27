@@ -9,6 +9,8 @@ import CornerTimerWidget from '@/components/CornerTimerWidget';
 import TimerSelector from '@/components/TimerSelector';
 import CompletionPopup from '@/components/CompletionPopup';
 import TaskDrawer from '@/components/TaskDrawer';
+import OnboardingTooltip from '@/components/OnboardingTooltip';
+import InstallPrompt from '@/components/InstallPrompt';
 import * as timer from '@/lib/timerService';
 import { supabase } from '@/lib/supabase';
 import type { TaskRow, CompletionStats, CalendarBlock } from '@/types/timer';
@@ -34,6 +36,7 @@ export default function Home() {
   const [toast, setToast]                         = useState<string | null>(null);
   const [showUserMenu, setShowUserMenu]           = useState(false);
   const [selectedDate, setSelectedDate]           = useState(new Date());
+  const [mobileView, setMobileView]               = useState<'tasks' | 'schedule'>('tasks');
 
   const userMenuRef  = useRef<HTMLDivElement>(null);
   const hasSyncedRef = useRef(false);
@@ -391,7 +394,7 @@ export default function Home() {
       {/* ── Main two-column content ───────────────────────────────────────── */}
       <div className="flex-1 flex overflow-hidden border-t border-surface-200">
         {/* Left: Upcoming task list */}
-        <aside className="w-72 flex-shrink-0 bg-white border-r border-surface-200 flex flex-col overflow-hidden">
+        <aside className={`w-full md:w-72 flex-shrink-0 bg-white md:border-r border-surface-200 flex-col overflow-hidden ${mobileView === 'tasks' ? 'flex' : 'hidden md:flex'}`}>
           <div className="px-5 py-4 border-b border-surface-100 flex-shrink-0">
             <h2 className="text-base font-bold text-surface-900">Upcoming Tasks</h2>
             <p className="text-xs text-surface-500 mt-0.5">
@@ -475,7 +478,7 @@ export default function Home() {
         </aside>
 
         {/* Right: Schedule View */}
-        <main className="flex-1 overflow-hidden bg-surface-50">
+        <main className={`flex-1 overflow-hidden bg-surface-50 ${mobileView === 'schedule' ? 'block' : 'hidden md:block'}`}>
           <ScheduleView
             tasks={tasks}
             loading={loading}
@@ -489,11 +492,37 @@ export default function Home() {
         </main>
       </div>
 
+      {/* ── Mobile tab bar ────────────────────────────────────────────────── */}
+      <nav className="md:hidden flex-shrink-0 bg-white border-t border-surface-200 flex h-14 z-30">
+        <button
+          onClick={() => setMobileView('tasks')}
+          className={`flex-1 flex flex-col items-center justify-center gap-0.5 text-xs font-medium transition-colors ${
+            mobileView === 'tasks' ? 'text-teal-600' : 'text-surface-400'
+          }`}
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+          </svg>
+          Tasks
+        </button>
+        <button
+          onClick={() => setMobileView('schedule')}
+          className={`flex-1 flex flex-col items-center justify-center gap-0.5 text-xs font-medium transition-colors ${
+            mobileView === 'schedule' ? 'text-teal-600' : 'text-surface-400'
+          }`}
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+          Schedule
+        </button>
+      </nav>
+
       {/* ── FAB ───────────────────────────────────────────────────────────── */}
       <button
         onClick={() => setShowDrawer(true)}
         className={`fixed right-6 z-50 w-14 h-14 bg-teal-600 hover:bg-teal-700 text-white rounded-full shadow-lg flex items-center justify-center transition-all duration-200 ${
-          timerActive ? 'bottom-52' : 'bottom-6'
+          timerActive ? 'bottom-52 max-md:bottom-[17rem]' : 'bottom-6 max-md:bottom-20'
         }`}
         title="Add new task"
         aria-label="Add new task"
@@ -532,6 +561,12 @@ export default function Home() {
           onClose={() => setShowTimerSelector(false)}
         />
       )}
+
+      {/* ── Onboarding ────────────────────────────────────────────────────── */}
+      <OnboardingTooltip />
+
+      {/* ── PWA install prompt ────────────────────────────────────────────── */}
+      <InstallPrompt />
 
       {/* ── Completion popup ──────────────────────────────────────────────── */}
       {completionStats && (
