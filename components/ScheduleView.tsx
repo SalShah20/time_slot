@@ -350,7 +350,7 @@ export default function ScheduleView({
       </div>
 
       {/* Scrollable grid */}
-      <div className="flex-1 overflow-y-auto" ref={gridRef}>
+      <div className="flex-1 overflow-y-auto pb-16" ref={gridRef}>
         {loading ? (
           <div className="flex items-center justify-center py-20 text-surface-400 text-sm">
             Loading schedule…

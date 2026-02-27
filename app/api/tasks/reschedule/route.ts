@@ -69,10 +69,6 @@ export async function POST() {
       ? new Date(task.scheduled_end)
       : new Date(taskStart.getTime() + task.estimated_minutes * 60_000);
 
-    // Check if this task conflicts with any busy calendar event
-    const hasConflict = calIntervals.some((iv) => overlaps(taskStart, taskEnd, iv.start, iv.end));
-    if (!hasConflict) continue;
-
     // Build busy intervals = all calendar events + all OTHER pending tasks (except the one we're rescheduling)
     const otherTaskIntervals: BusyInterval[] = (pendingTasks ?? [])
       .filter((t) => t.id !== task.id && t.scheduled_start)
@@ -84,6 +80,10 @@ export async function POST() {
       }));
 
     const allBusy = [...calIntervals, ...otherTaskIntervals];
+
+    // Check if this task conflicts with any GCal event OR another pending task
+    const hasConflict = allBusy.some((iv) => overlaps(taskStart, taskEnd, iv.start, iv.end));
+    if (!hasConflict) continue;
 
     const { scheduled_start, scheduled_end } = fallbackSchedule(
       allBusy,

@@ -38,7 +38,8 @@ export async function GET(req: NextRequest) {
       .lt('start_time', endOfDay),
   ]);
 
-  console.log('[GET /api/blocks] Results — manual blocks:', manual?.length ?? 0, 'google events:', google?.length ?? 0);
+  console.log('[GET /api/blocks] Results — manual blocks:', manual?.length ?? 0, 'google events:', google?.length ?? 0,
+    'event times:', (google ?? []).map((e) => ({ title: e.title, start: e.start_time })));
   if (manualError) console.error('[GET /api/blocks] calendar_blocks error:', manualError);
   if (googleError) console.error('[GET /api/blocks] calendar_events error:', googleError);
 
