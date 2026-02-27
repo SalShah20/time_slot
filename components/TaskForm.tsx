@@ -4,9 +4,20 @@ import { useState } from 'react';
 import type { TaskRow } from '@/types/timer';
 import { getTagColor } from '@/lib/tagColors';
 
+export interface TaskInput {
+  title: string;
+  description?: string;
+  tag?: string;
+  estimatedMinutes: number;
+  priority: string;
+  deadline?: string;
+}
+
 interface Props {
   onTaskCreated: (task: TaskRow) => void;
   hideHeader?: boolean;
+  /** If provided, the form operates in "queue" mode: validates then calls this instead of the API. */
+  onQueue?: (task: TaskInput) => void;
 }
 
 const DURATION_OPTIONS = [
@@ -27,7 +38,7 @@ const PRIORITY_OPTIONS = [
 ] as const;
 type Priority = 'low' | 'medium' | 'high';
 
-export default function TaskForm({ onTaskCreated, hideHeader = false }: Props) {
+export default function TaskForm({ onTaskCreated, hideHeader = false, onQueue }: Props) {
   const [title, setTitle]               = useState('');
   const [description, setDescription]   = useState('');
   const [deadlineDate, setDeadlineDate] = useState('');
@@ -42,12 +53,25 @@ export default function TaskForm({ onTaskCreated, hideHeader = false }: Props) {
 
   const isCustom = durationValue === 0;
   const estimatedMinutes = isCustom ? parseInt(customMinutes, 10) || 0 : durationValue;
+  const isQueueMode = !!onQueue;
 
   // Build ISO deadline: date required, time optional (defaults to midnight)
   function buildDeadline(): string | undefined {
     if (!deadlineDate) return undefined;
     const time = deadlineTime || '00:00';
     return new Date(`${deadlineDate}T${time}:00`).toISOString();
+  }
+
+  function resetForm() {
+    setTitle('');
+    setDescription('');
+    setDeadlineDate('');
+    setDeadlineTime('');
+    setTag('');
+    setDurationValue(60);
+    setCustomMinutes('');
+    setPriority('medium');
+    setError(null);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -58,6 +82,22 @@ export default function TaskForm({ onTaskCreated, hideHeader = false }: Props) {
     if (!title.trim())        return setError('Task title is required.');
     if (!deadlineDate)        return setError('Deadline date is required.');
     if (estimatedMinutes < 1) return setError('Please enter a valid duration.');
+
+    // Queue mode: collect data without API call
+    if (isQueueMode) {
+      onQueue({
+        title:          title.trim(),
+        description:    description.trim() || undefined,
+        tag:            tag.trim() || undefined,
+        estimatedMinutes,
+        priority,
+        deadline:       buildDeadline(),
+      });
+      resetForm();
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 1500);
+      return;
+    }
 
     setLoading(true);
     try {
@@ -83,14 +123,7 @@ export default function TaskForm({ onTaskCreated, hideHeader = false }: Props) {
       onTaskCreated(task);
 
       // Reset form
-      setTitle('');
-      setDescription('');
-      setDeadlineDate('');
-      setDeadlineTime('');
-      setTag('');
-      setDurationValue(60);
-      setCustomMinutes('');
-      setPriority('medium');
+      resetForm();
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
@@ -256,7 +289,7 @@ export default function TaskForm({ onTaskCreated, hideHeader = false }: Props) {
         )}
         {success && (
           <p className="text-sm text-teal-700 bg-teal-50 px-3 py-2 rounded-lg font-medium">
-            Task added and scheduled!
+            {isQueueMode ? 'Added to queue!' : 'Task added and scheduled!'}
           </p>
         )}
 
@@ -265,7 +298,7 @@ export default function TaskForm({ onTaskCreated, hideHeader = false }: Props) {
           disabled={loading}
           className="w-full py-2.5 bg-teal-600 text-white text-sm font-semibold rounded-lg hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          {loading ? 'Scheduling…' : '+ Add & Auto-Schedule'}
+          {loading ? 'Scheduling…' : isQueueMode ? '+ Add to Queue' : '+ Add & Auto-Schedule'}
         </button>
       </form>
     </div>

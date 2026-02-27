@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
+import { getCalendarClient, deleteCalendarEvent } from '@/lib/googleCalendar';
+import { getTagColor } from '@/lib/tagColors';
 import { fallbackSchedule } from '@/lib/scheduleUtils';
 import type { BusyInterval } from '@/lib/scheduleUtils';
 
@@ -25,7 +27,7 @@ export async function POST() {
   // Fetch all pending tasks (skip in_progress — don't interrupt active work)
   const { data: pendingTasks, error: tasksError } = await supabase
     .from('tasks')
-    .select('id, title, estimated_minutes, scheduled_start, scheduled_end, deadline, status')
+    .select('id, title, description, tag, estimated_minutes, scheduled_start, scheduled_end, deadline, status, google_event_id')
     .eq('user_id', user.id)
     .eq('status', 'pending')
     .gte('scheduled_start', todayStart)
@@ -53,6 +55,9 @@ export async function POST() {
     start: new Date(e.start_time),
     end: new Date(e.end_time),
   }));
+
+  // Get GCal client once (null if calendar not connected)
+  const calendar = await getCalendarClient(supabase, user.id);
 
   const rescheduled: { id: string; title: string; scheduled_start: string; scheduled_end: string }[] = [];
 
@@ -86,9 +91,36 @@ export async function POST() {
       task.deadline,
     );
 
+    // Delete old GCal event and create a new one with updated time
+    let newEventId: string | null = null;
+    if (calendar) {
+      if (task.google_event_id) {
+        await deleteCalendarEvent(calendar, task.google_event_id);
+      }
+      try {
+        const tagColor = getTagColor(task.tag ?? undefined);
+        const gcalEvent = await calendar.events.insert({
+          calendarId: 'primary',
+          requestBody: {
+            summary:     task.title,
+            description: task.description ?? '',
+            start:       { dateTime: scheduled_start },
+            end:         { dateTime: scheduled_end },
+            colorId:     tagColor.gcalColorId,
+          },
+        });
+        newEventId = gcalEvent.data.id ?? null;
+      } catch (err) {
+        console.warn(`[/api/tasks/reschedule] GCal event recreation failed for task ${task.id}:`, err);
+      }
+    }
+
+    const updatePayload: Record<string, unknown> = { scheduled_start, scheduled_end };
+    if (newEventId) updatePayload.google_event_id = newEventId;
+
     const { error: updateError } = await supabase
       .from('tasks')
-      .update({ scheduled_start, scheduled_end })
+      .update(updatePayload)
       .eq('id', task.id)
       .eq('user_id', user.id);
 
@@ -96,6 +128,7 @@ export async function POST() {
       // Update in our local array so subsequent tasks see the new slot as occupied
       task.scheduled_start = scheduled_start;
       task.scheduled_end   = scheduled_end;
+      if (newEventId) task.google_event_id = newEventId;
       rescheduled.push({ id: task.id, title: task.title, scheduled_start, scheduled_end });
       console.log(`[/api/tasks/reschedule] "${task.title}" moved to ${scheduled_start}`);
     } else {

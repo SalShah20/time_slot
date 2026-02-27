@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { google } from 'googleapis';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
-import { createOAuthClient } from '@/lib/googleCalendar';
+import { getCalendarClient } from '@/lib/googleCalendar';
 import { getTagColor } from '@/lib/tagColors';
 import { fallbackSchedule } from '@/lib/scheduleUtils';
 import type { BusyInterval } from '@/lib/scheduleUtils';
@@ -42,7 +41,7 @@ async function scheduleWithLLM(
       .lt('start_time', twoDaysOut.toISOString()),
   ]);
 
-  // Build busy intervals for the fallback
+  // Build busy intervals for the fallback and overlap check
   const busyIntervals: BusyInterval[] = [
     ...(existingTasks ?? [])
       .filter((t) => t.scheduled_start)
@@ -136,6 +135,17 @@ Respond ONLY with this JSON (no extra text):
       }
     }
 
+    // Validate: LLM result must not overlap any busy interval
+    const hasOverlap = busyIntervals.some(
+      (iv) => iv.start < scheduledEnd && iv.end > scheduledStart,
+    );
+    if (hasOverlap) {
+      console.warn(
+        '[scheduleWithLLM] LLM result overlaps existing schedule for "' + task.title + '" — falling back to deterministic scheduler',
+      );
+      return fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline);
+    }
+
     return {
       scheduled_start: scheduledStart.toISOString(),
       scheduled_end:   scheduledEnd.toISOString(),
@@ -220,26 +230,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // Mirror to Google Calendar — non-fatal if it fails
+  // Mirror to Google Calendar and store event ID — non-fatal if it fails
   try {
-    const { data: tokenRow } = await supabase
-      .from('user_tokens')
-      .select('google_access_token, google_refresh_token, google_token_expiry')
-      .eq('user_id', user.id)
-      .single();
-
-    if (tokenRow?.google_access_token) {
-      const oauth2Client = createOAuthClient();
-      oauth2Client.setCredentials({
-        access_token:  tokenRow.google_access_token,
-        refresh_token: tokenRow.google_refresh_token ?? undefined,
-        expiry_date:   tokenRow.google_token_expiry
-          ? new Date(tokenRow.google_token_expiry).getTime()
-          : undefined,
-      });
-      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+    const calendar = await getCalendarClient(supabase, user.id);
+    if (calendar) {
       const tagColor = getTagColor(tag);
-      await calendar.events.insert({
+      const gcalEvent = await calendar.events.insert({
         calendarId: 'primary',
         requestBody: {
           summary:     title,
@@ -249,6 +245,15 @@ export async function POST(req: NextRequest) {
           colorId:     tagColor.gcalColorId,
         },
       });
+
+      const eventId = gcalEvent.data.id;
+      if (eventId && data?.id) {
+        await supabase
+          .from('tasks')
+          .update({ google_event_id: eventId })
+          .eq('id', data.id);
+        (data as Record<string, unknown>).google_event_id = eventId;
+      }
     }
   } catch (err) {
     console.error('[/api/tasks/create] Google Calendar event creation:', err);

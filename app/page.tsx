@@ -12,6 +12,12 @@ import TaskDrawer from '@/components/TaskDrawer';
 import * as timer from '@/lib/timerService';
 import { supabase } from '@/lib/supabase';
 import type { TaskRow, CompletionStats, CalendarBlock } from '@/types/timer';
+import {
+  requestPermission,
+  checkTaskStartingSoon,
+  checkDeadlineApproaching,
+  sendMorningSummary,
+} from '@/lib/notifications';
 
 export default function Home() {
   const router = useRouter();
@@ -31,6 +37,7 @@ export default function Home() {
 
   const userMenuRef  = useRef<HTMLDivElement>(null);
   const hasSyncedRef = useRef(false);
+  const tasksRef     = useRef<TaskRow[]>([]); // always-current copy for notification callbacks
 
   // ── Auth ────────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -156,6 +163,46 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate]);
 
+  // ── Notifications ────────────────────────────────────────────────────────────
+  // Keep ref current so intervals/timeouts always see latest tasks
+  useEffect(() => { tasksRef.current = tasks; }, [tasks]);
+
+  // Request browser notification permission once on mount
+  useEffect(() => { void requestPermission(); }, []);
+
+  // Deadline warnings + morning summary — re-runs when tasks load/change,
+  // but localStorage keys prevent double-firing
+  useEffect(() => {
+    if (tasks.length === 0) return;
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    if (Notification.permission !== 'granted') return;
+    const now = new Date();
+    const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    checkDeadlineApproaching(tasks);
+    if (now.getHours() >= 8) sendMorningSummary(tasks, dateKey);
+  }, [tasks]);
+
+  // If it's before 8am, schedule the morning summary summary via setTimeout
+  useEffect(() => {
+    const now = new Date();
+    if (now.getHours() >= 8) return; // already handled by the tasks effect above
+    const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const msUntil8 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 8, 0, 0).getTime() - now.getTime();
+    const id = setTimeout(() => {
+      if (Notification.permission === 'granted') sendMorningSummary(tasksRef.current, dateKey);
+    }, msUntil8);
+    return () => clearTimeout(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Poll every minute for "task starting soon" (15 min warning)
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (Notification.permission === 'granted') checkTaskStartingSoon(tasksRef.current);
+    }, 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   // ── Toast helper ────────────────────────────────────────────────────────────
   const showToast = (msg: string) => {
     setToast(msg);
@@ -166,6 +213,11 @@ export default function Home() {
   const handleTaskCreated = useCallback((task: TaskRow) => {
     setTasks((prev) => [...prev, task]);
     showToast('Task added! Auto-scheduling complete.');
+  }, []);
+
+  const handleTasksCreated = useCallback((newTasks: TaskRow[]) => {
+    setTasks((prev) => [...prev, ...newTasks]);
+    showToast(`${newTasks.length} task${newTasks.length !== 1 ? 's' : ''} added and scheduled!`);
   }, []);
 
   const handleComplete = useCallback((stats: CompletionStats) => {
@@ -456,6 +508,7 @@ export default function Home() {
         open={showDrawer}
         onClose={() => setShowDrawer(false)}
         onTaskCreated={handleTaskCreated}
+        onTasksCreated={handleTasksCreated}
       />
 
       {/* ── Toast ─────────────────────────────────────────────────────────── */}

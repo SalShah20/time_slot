@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
+import { getCalendarClient, deleteCalendarEvent } from '@/lib/googleCalendar';
 import type { LocalSession } from '@/types/timer';
 
 export async function POST(req: NextRequest) {
@@ -20,6 +21,13 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createSupabaseServer();
+
+  // Fetch google_event_id before completing so we can clean up GCal
+  const { data: taskRow } = await supabase
+    .from('tasks')
+    .select('google_event_id')
+    .eq('id', taskId)
+    .single();
 
   // 1. Update task: mark completed + set actual_duration
   const { error: taskError } = await supabase
@@ -67,6 +75,17 @@ export async function POST(req: NextRequest) {
     if (sessionError) {
       console.error('[/api/timer/complete] insert timer_sessions', sessionError);
       // Non-fatal — task is already completed
+    }
+  }
+
+  // 4. Delete Google Calendar event — non-fatal
+  const googleEventId = (taskRow as Record<string, unknown> | null)?.google_event_id as string | null;
+  if (googleEventId) {
+    try {
+      const calendar = await getCalendarClient(supabase, user.id);
+      if (calendar) await deleteCalendarEvent(calendar, googleEventId);
+    } catch (err) {
+      console.warn('[/api/timer/complete] GCal cleanup failed:', err);
     }
   }
 
