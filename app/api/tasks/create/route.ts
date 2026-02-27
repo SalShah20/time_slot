@@ -82,7 +82,7 @@ CALENDAR EVENTS (today & tomorrow):
 ${JSON.stringify(calEvents ?? [])}
 
 RULES:
-1. Try to schedule between 7am and midnight, but if the deadline is sooner, make it ASAP. It is ok to schedule past midnight but only if completely necessary, and there are no other open slots.
+1. Schedule between 7am and 11pm. Never use the 12am–7am window. If the deadline is sooner, schedule ASAP. After 11pm (but before midnight) is only acceptable as an absolute last resort when no earlier slot exists before the deadline.
 2. Task end time MUST be before or at deadline
 3. If deadline is today, schedule ASAP — do not push to tomorrow
 4. Avoid overlapping existing tasks and calendar events

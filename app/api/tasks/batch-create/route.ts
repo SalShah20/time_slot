@@ -59,7 +59,7 @@ EXISTING BUSY INTERVALS (tasks + calendar events):
 ${JSON.stringify(busyForPrompt)}
 
 RULES:
-1. Try to schedule between 7am and midnight; if a deadline is sooner, schedule ASAP
+1. Schedule between 7am and 11pm; never use 12am–7am. If a deadline is sooner, schedule ASAP. After 11pm is a last resort only when no earlier slot exists.
 2. Each task's end time MUST be before or at its deadline
 3. Tasks due sooner should generally be scheduled sooner
 4. No overlaps between tasks being scheduled, or with existing busy intervals
