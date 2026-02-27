@@ -281,7 +281,7 @@ export default function Home() {
     new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 
   return (
-    <div className="h-screen flex flex-col bg-surface-50 overflow-hidden">
+    <div className="h-[100dvh] flex flex-col bg-surface-50 overflow-hidden">
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <header className="bg-white border-b border-surface-200 px-6 py-3.5 flex-shrink-0 flex items-center justify-between">
         {/* Logo */}
@@ -391,6 +391,40 @@ export default function Home() {
       {/* ── Stats ─────────────────────────────────────────────────────────── */}
       <StatsCards />
 
+      {/* ── Mobile inline tab switcher ────────────────────────────────────── */}
+      <div className="md:hidden flex-shrink-0 bg-white border-b border-surface-200">
+        <div className="flex">
+          <button
+            onClick={() => setMobileView('tasks')}
+            className={`flex-1 py-3 flex items-center justify-center gap-1.5 text-sm font-medium relative transition-colors ${
+              mobileView === 'tasks' ? 'text-teal-600' : 'text-surface-400'
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+            </svg>
+            Tasks
+            {mobileView === 'tasks' && (
+              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-teal-600" />
+            )}
+          </button>
+          <button
+            onClick={() => setMobileView('schedule')}
+            className={`flex-1 py-3 flex items-center justify-center gap-1.5 text-sm font-medium relative transition-colors ${
+              mobileView === 'schedule' ? 'text-teal-600' : 'text-surface-400'
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            Schedule
+            {mobileView === 'schedule' && (
+              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-teal-600" />
+            )}
+          </button>
+        </div>
+      </div>
+
       {/* ── Main two-column content ───────────────────────────────────────── */}
       <div className="flex-1 flex overflow-hidden border-t border-surface-200">
         {/* Left: Upcoming task list */}
@@ -401,7 +435,7 @@ export default function Home() {
               {upcomingTasks.length} task{upcomingTasks.length !== 1 ? 's' : ''}
             </p>
           </div>
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto pb-20 md:pb-0">
             {loading ? (
               <div className="flex items-center justify-center py-12 text-surface-400 text-sm">
                 Loading…
@@ -431,7 +465,7 @@ export default function Home() {
                           onClick={() => void handleQuickComplete(task.id)}
                           disabled={isDone || task.status === 'in_progress'}
                           title={task.status === 'in_progress' ? 'Stop timer first' : 'Mark complete'}
-                          className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
+                          className={`flex-shrink-0 w-7 h-7 md:w-5 md:h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
                             isDone
                               ? 'border-green-400 bg-green-400'
                               : task.status === 'in_progress'
@@ -492,37 +526,12 @@ export default function Home() {
         </main>
       </div>
 
-      {/* ── Mobile tab bar ────────────────────────────────────────────────── */}
-      <nav className="md:hidden flex-shrink-0 bg-white border-t border-surface-200 flex h-14 z-30">
-        <button
-          onClick={() => setMobileView('tasks')}
-          className={`flex-1 flex flex-col items-center justify-center gap-0.5 text-xs font-medium transition-colors ${
-            mobileView === 'tasks' ? 'text-teal-600' : 'text-surface-400'
-          }`}
-        >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-          </svg>
-          Tasks
-        </button>
-        <button
-          onClick={() => setMobileView('schedule')}
-          className={`flex-1 flex flex-col items-center justify-center gap-0.5 text-xs font-medium transition-colors ${
-            mobileView === 'schedule' ? 'text-teal-600' : 'text-surface-400'
-          }`}
-        >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-          </svg>
-          Schedule
-        </button>
-      </nav>
 
       {/* ── FAB ───────────────────────────────────────────────────────────── */}
       <button
         onClick={() => setShowDrawer(true)}
         className={`fixed right-6 z-50 w-14 h-14 bg-teal-600 hover:bg-teal-700 text-white rounded-full shadow-lg flex items-center justify-center transition-all duration-200 ${
-          timerActive ? 'bottom-52 max-md:bottom-[17rem]' : 'bottom-6 max-md:bottom-20'
+          timerActive ? 'bottom-52' : 'bottom-6'
         }`}
         title="Add new task"
         aria-label="Add new task"

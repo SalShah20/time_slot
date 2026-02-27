@@ -18,6 +18,41 @@ body {
   color: var(--foreground);
   background: var(--background);
   font-family: Arial, Helvetica, sans-serif;
+  /* Prevent horizontal scroll bleed on mobile */
+  overflow-x: hidden;
+}
+
+/* ── Mobile improvements ─────────────────────────────────────── */
+
+/* Prevent tap highlight flash on iOS/Android */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Smooth momentum scrolling on iOS */
+.overflow-y-auto,
+.overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Hide scrollbar on horizontal-scroll stats strip but keep it scrollable */
+.overflow-x-auto {
+  scrollbar-width: none; /* Firefox */
+}
+.overflow-x-auto::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
+/* Safe-area padding helper for iPhone home indicator */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@media (max-width: 768px) {
+  /* Prevent iOS font size inflation on rotation */
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
 }
 
 @layer utilities {
