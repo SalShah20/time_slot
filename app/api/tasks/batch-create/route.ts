@@ -184,7 +184,13 @@ export async function POST(req: NextRequest) {
   const user = await getAuthUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { tasks } = await req.json() as { tasks: TaskInput[] };
+  let body: { tasks: TaskInput[] };
+  try {
+    body = await req.json() as { tasks: TaskInput[] };
+  } catch {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+  }
+  const { tasks } = body;
 
   if (!Array.isArray(tasks) || tasks.length === 0) {
     return NextResponse.json({ error: 'tasks array is required' }, { status: 400 });
@@ -197,6 +203,7 @@ export async function POST(req: NextRequest) {
 
   const supabase = createSupabaseServer();
 
+  try {
   // Fill in missing durations via LLM (parallel to keep batch fast)
   const tasksWithDurations = await Promise.all(
     tasks.map(async (t) => {
@@ -306,4 +313,11 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ tasks: insertedTasks });
+  } catch (err) {
+    console.error('[/api/tasks/batch-create] Unhandled error:', err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Internal server error' },
+      { status: 500 },
+    );
+  }
 }

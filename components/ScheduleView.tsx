@@ -1,13 +1,15 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import type { TaskRow, CalendarBlock } from '@/types/timer';
 import AddBlockModal from '@/components/AddBlockModal';
 import { getTagColor } from '@/lib/tagColors';
 
-const HOUR_HEIGHT = 64; // px per hour
-const START_HOUR  = 6;  // 6 am — no tasks scheduled before this
-const END_HOUR    = 24; // midnight
+const HOUR_HEIGHT      = 64; // px per hour
+const START_HOUR       = 0;  // midnight — show full 24 hours
+const END_HOUR         = 24; // midnight next day
+const SLEEP_END_HOUR   = 6;  // 12 AM–6 AM = sleep window
+const LATE_NIGHT_HOUR  = 22; // 10 PM–midnight = late night window
 
 // ── Column layout algorithm ────────────────────────────────────────────────
 
@@ -90,12 +92,9 @@ function heightForRange(startIso: string, endIso: string): number {
   return Math.max(28, (durationMinutes / 60) * HOUR_HEIGHT);
 }
 
-function currentTimeTop(): number | null {
+function currentTimeTop(): number {
   const now = new Date();
-  const h = now.getHours();
-  const m = now.getMinutes();
-  if (h < START_HOUR || h >= END_HOUR) return null;
-  return (h - START_HOUR + m / 60) * HOUR_HEIGHT;
+  return (now.getHours() - START_HOUR + now.getMinutes() / 60) * HOUR_HEIGHT;
 }
 
 function isSameDay(a: Date, b: Date): boolean {
@@ -111,15 +110,19 @@ function TaskBlock({ task, colStyle }: { task: TaskRow; colStyle?: React.CSSProp
   const height = heightForMinutes(task.estimated_minutes);
   const tagColor = getTagColor(task.tag);
 
+  const isSleepHour = new Date(task.scheduled_start!).getHours() < SLEEP_END_HOUR;
+
   // Status colors take precedence; tag colors apply for pending tasks
   const borderColor =
     task.status === 'in_progress' ? 'border-amber-400' :
     task.status === 'completed'   ? 'border-green-400' :
+    isSleepHour ? 'border-orange-400' :
     tagColor.border;
 
   const bg =
     task.status === 'completed'   ? 'bg-green-50 text-green-700 opacity-60' :
     task.status === 'in_progress' ? 'bg-amber-50 text-amber-900' :
+    isSleepHour ? 'bg-orange-50 text-orange-900' :
     'bg-white text-surface-900';
 
   return (
@@ -131,7 +134,10 @@ function TaskBlock({ task, colStyle }: { task: TaskRow; colStyle?: React.CSSProp
       <p className="text-xs font-semibold truncate leading-tight">{task.title}</p>
       <div className="flex items-center gap-1.5 mt-0.5">
         <p className="text-xs opacity-60">{task.estimated_minutes}m</p>
-        {task.tag && (
+        {isSleepHour && (
+          <span className="text-xs font-medium text-orange-600">⚠ Late night</span>
+        )}
+        {!isSleepHour && task.tag && (
           <span
             className="text-xs font-medium px-1.5 py-0.5 rounded-full"
             style={{ backgroundColor: tagColor.hex + '22', color: tagColor.hex }}
@@ -203,13 +209,13 @@ export default function ScheduleView({
   const selectedDate = selectedDateProp ?? today;
   const isToday = isSameDay(selectedDate, today);
 
-  const [timeTop, setTimeTop]           = useState<number | null>(isToday ? currentTimeTop() : null);
+  const [timeTop, setTimeTop]           = useState<number>(isToday ? currentTimeTop() : -1);
   const [showAddBlock, setShowAddBlock] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isToday) {
-      setTimeTop(null);
+      setTimeTop(-1);
       return;
     }
     setTimeTop(currentTimeTop());
@@ -217,13 +223,25 @@ export default function ScheduleView({
     return () => clearInterval(id);
   }, [isToday]);
 
+  const scrollToNow = useCallback(() => {
+    if (!gridRef.current) return;
+    const top = currentTimeTop();
+    gridRef.current.scrollTop = Math.max(0, top - gridRef.current.clientHeight / 3);
+  }, []);
+
+  const scrollToHour = useCallback((hour: number) => {
+    if (!gridRef.current) return;
+    const top = (hour - START_HOUR) * HOUR_HEIGHT;
+    gridRef.current.scrollTop = Math.max(0, top - gridRef.current.clientHeight / 3);
+  }, []);
+
   // Scroll to a smart position whenever the viewed date changes.
   // Today → current time. Other days → first scheduled task, or 8 AM default.
   const selectedDateKey = `${selectedDate.getFullYear()}-${selectedDate.getMonth()}-${selectedDate.getDate()}`;
   useEffect(() => {
     if (!gridRef.current) return;
-    if (isToday && timeTop !== null) {
-      gridRef.current.scrollTop = Math.max(0, timeTop - 80);
+    if (isToday) {
+      gridRef.current.scrollTop = Math.max(0, currentTimeTop() - 80);
       return;
     }
     const firstTask = [...viewTasks].sort(
@@ -254,6 +272,12 @@ export default function ScheduleView({
   const viewBlocks = blocks.filter((b) => {
     const ts = new Date(b.start_time).getTime();
     return ts >= selectedStart && ts < selectedEnd;
+  });
+
+  // Detect tasks scheduled in the sleep window (midnight–6 AM)
+  const sleepHourTasks = viewTasks.filter((t) => {
+    if (!t.scheduled_start) return false;
+    return new Date(t.scheduled_start).getHours() < SLEEP_END_HOUR;
   });
 
   // Column layout: combine tasks + blocks
@@ -332,6 +356,16 @@ export default function ScheduleView({
             </button>
           )}
 
+          {/* Jump to now (today only) */}
+          {isToday && (
+            <button
+              onClick={scrollToNow}
+              className="px-2.5 py-1 rounded-lg border border-teal-200 text-xs font-medium text-teal-600 hover:bg-teal-50 transition-colors"
+            >
+              Now
+            </button>
+          )}
+
           {viewTasks.length > 0 && (
             <span className="text-xs bg-teal-100 text-teal-700 font-medium px-2 py-0.5 rounded-full">
               {viewTasks.length} task{viewTasks.length > 1 ? 's' : ''} scheduled
@@ -349,6 +383,53 @@ export default function ScheduleView({
         </div>
       </div>
 
+      {/* Sleep-hour warning banner */}
+      {sleepHourTasks.length > 0 && (
+        <div className="flex-shrink-0 mx-4 mt-3 mb-1 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2.5 flex items-start gap-2">
+          <svg className="w-4 h-4 text-orange-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          </svg>
+          <div>
+            <p className="text-xs font-semibold text-orange-800">
+              {sleepHourTasks.length} task{sleepHourTasks.length !== 1 ? 's' : ''} scheduled between midnight and 6 AM
+            </p>
+            <p className="text-xs text-orange-600 mt-0.5">
+              This may indicate a scheduling bug. Tasks are highlighted in orange below.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile quick-jump strip */}
+      <div className="md:hidden flex-shrink-0 flex gap-2 px-4 py-2 overflow-x-auto border-b border-surface-100 bg-white">
+        <button
+          onClick={() => scrollToHour(8)}
+          className="px-3 py-1 text-xs bg-amber-50 text-amber-700 border border-amber-200 rounded-full whitespace-nowrap flex-shrink-0"
+        >
+          Morning
+        </button>
+        <button
+          onClick={() => scrollToHour(12)}
+          className="px-3 py-1 text-xs bg-sky-50 text-sky-700 border border-sky-200 rounded-full whitespace-nowrap flex-shrink-0"
+        >
+          Afternoon
+        </button>
+        <button
+          onClick={() => scrollToHour(17)}
+          className="px-3 py-1 text-xs bg-orange-50 text-orange-700 border border-orange-200 rounded-full whitespace-nowrap flex-shrink-0"
+        >
+          Evening
+        </button>
+        {isToday && (
+          <button
+            onClick={scrollToNow}
+            className="px-3 py-1 text-xs bg-red-50 text-red-700 border border-red-200 rounded-full whitespace-nowrap flex-shrink-0 font-medium"
+          >
+            Now
+          </button>
+        )}
+      </div>
+
       {/* Scrollable grid */}
       <div className="flex-1 overflow-y-auto pb-16" ref={gridRef}>
         {loading ? (
@@ -359,16 +440,32 @@ export default function ScheduleView({
           <>
             {/* Time grid */}
             <div className="relative mx-4 mt-2" style={{ height: `${gridHeight}px` }}>
+
+              {/* Sleep-hour background band (midnight–6 AM) */}
+              <div
+                className="absolute left-0 right-0 bg-slate-50 rounded-t-lg"
+                style={{ top: 0, height: `${(SLEEP_END_HOUR - START_HOUR) * HOUR_HEIGHT}px` }}
+              />
+              {/* Late-night background band (10 PM–midnight) */}
+              <div
+                className="absolute left-0 right-0 bg-slate-50 rounded-b-lg"
+                style={{
+                  top: `${(LATE_NIGHT_HOUR - START_HOUR) * HOUR_HEIGHT}px`,
+                  height: `${(END_HOUR - LATE_NIGHT_HOUR) * HOUR_HEIGHT}px`,
+                }}
+              />
+
               {/* Hour rows */}
               {Array.from({ length: totalHours + 1 }, (_, i) => {
                 const h = START_HOUR + i;
+                const isMuted = h < SLEEP_END_HOUR || h >= LATE_NIGHT_HOUR;
                 return (
                   <div
                     key={h}
                     className="absolute w-full border-t border-surface-100 flex items-start"
                     style={{ top: `${i * HOUR_HEIGHT}px` }}
                   >
-                    <span className="text-xs text-surface-400 w-10 pr-2 text-right -mt-2 select-none">
+                    <span className={`text-xs w-10 pr-2 text-right -mt-2 select-none ${isMuted ? 'text-surface-300' : 'text-surface-400'}`}>
                       {formatHour(h)}
                     </span>
                   </div>
@@ -401,7 +498,7 @@ export default function ScheduleView({
               })}
 
               {/* Current time indicator (today only) */}
-              {isToday && timeTop !== null && (
+              {isToday && timeTop >= 0 && (
                 <div
                   className="absolute left-0 right-0 z-20 pointer-events-none"
                   style={{ top: `${timeTop}px` }}

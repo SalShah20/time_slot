@@ -56,11 +56,13 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tasks: queue }),
       });
+      // Parse once: safely handle non-JSON responses (e.g. 500 HTML error pages)
+      let data: Record<string, unknown> = {};
+      try { data = await res.json() as Record<string, unknown>; } catch { /* non-JSON */ }
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error ?? 'Batch scheduling failed');
+        throw new Error((data.error as string) ?? `Batch scheduling failed (HTTP ${res.status})`);
       }
-      const { tasks } = await res.json() as { tasks: TaskRow[] };
+      const { tasks } = data as { tasks: TaskRow[] };
       if (onTasksCreated) {
         onTasksCreated(tasks);
       } else {

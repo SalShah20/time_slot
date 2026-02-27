@@ -126,8 +126,9 @@ export default function TaskForm({ onTaskCreated, hideHeader = false, onQueue }:
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error ?? 'Failed to create task');
+        let errMsg = 'Failed to create task';
+        try { const d = await res.json() as { error?: string }; errMsg = d.error ?? errMsg; } catch { /* non-JSON */ }
+        throw new Error(errMsg);
       }
 
       const task: TaskRow = await res.json();
