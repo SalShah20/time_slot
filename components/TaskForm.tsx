@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { TaskRow } from '@/types/timer';
 import { getTagColor } from '@/lib/tagColors';
+import { getUserTags, saveUserTag } from '@/lib/userTags';
 
 export interface TaskInput {
   title: string;
@@ -50,6 +51,9 @@ export default function TaskForm({ onTaskCreated, hideHeader = false, onQueue }:
   const [loading, setLoading]           = useState(false);
   const [error, setError]               = useState<string | null>(null);
   const [success, setSuccess]           = useState(false);
+  const [customTags, setCustomTags]     = useState<string[]>([]);
+
+  useEffect(() => { setCustomTags(getUserTags()); }, []);
 
   const isCustom = durationValue === 0;
   const estimatedMinutes = isCustom ? parseInt(customMinutes, 10) || 0 : durationValue;
@@ -85,6 +89,10 @@ export default function TaskForm({ onTaskCreated, hideHeader = false, onQueue }:
 
     // Queue mode: collect data without API call
     if (isQueueMode) {
+      if (tag.trim()) {
+        saveUserTag(tag.trim());
+        setCustomTags(getUserTags());
+      }
       onQueue({
         title:          title.trim(),
         description:    description.trim() || undefined,
@@ -120,6 +128,10 @@ export default function TaskForm({ onTaskCreated, hideHeader = false, onQueue }:
       }
 
       const task: TaskRow = await res.json();
+      if (tag.trim()) {
+        saveUserTag(tag.trim());
+        setCustomTags(getUserTags());
+      }
       onTaskCreated(task);
 
       // Reset form
@@ -230,6 +242,28 @@ export default function TaskForm({ onTaskCreated, hideHeader = false, onQueue }:
                 </button>
               );
             })}
+            {customTags.length > 0 && (
+              <>
+                <span className="self-center text-surface-300 text-xs select-none">·</span>
+                {customTags.map((s) => {
+                  const isActive = tag === s;
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onMouseDown={() => setTag(s)}
+                      className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                        isActive
+                          ? 'border-teal-500 bg-teal-50 text-teal-800'
+                          : 'border-surface-200 text-surface-600 hover:border-surface-300 hover:bg-surface-50'
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  );
+                })}
+              </>
+            )}
           </div>
         </div>
 

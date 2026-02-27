@@ -35,7 +35,10 @@ export default function LoginPage() {
       options: {
         redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
         scopes: 'https://www.googleapis.com/auth/calendar',
-        queryParams: { access_type: 'offline', prompt: 'consent' },
+        // access_type: 'offline' gets a refresh token on first sign-in.
+        // No 'prompt: consent' — Google only shows the full consent screen once,
+        // then skips straight to account picker on repeat sign-ins.
+        queryParams: { access_type: 'offline' },
       },
     });
   };

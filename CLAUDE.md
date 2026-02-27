@@ -18,74 +18,182 @@ Requires `.env.local`:
 ```
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
-NEXT_PUBLIC_PLACEHOLDER_USER_ID=   # UUID used instead of real auth
 GOOGLE_CLIENT_ID=                  # from google-calendar-mcp/gcp-oauth.keys.json
 GOOGLE_CLIENT_SECRET=              # from google-calendar-mcp/gcp-oauth.keys.json
 NEXT_PUBLIC_APP_URL=http://localhost:3000
+OPENAI_API_KEY=                    # for LLM-powered scheduling (GPT-4o-mini)
 ```
 
-There is no user authentication. Every DB query hard-codes `PLACEHOLDER_USER_ID` from `lib/supabase.ts`.
+## Authentication
+
+Supabase Auth with Google OAuth. `middleware.ts` protects all routes — unauthenticated users are redirected to `/login`. The auth flow is:
+1. `/login` — Google sign-in button
+2. `/auth/callback` — Supabase OAuth code exchange, then redirect to `/`
+
+Server-side: use `getAuthUser()` from `lib/supabase-server.ts` in API routes. It returns the authenticated user or `null`. All DB queries are scoped to `user.id`.
+
+Client-side: `supabase.auth.getSession()` + `onAuthStateChange` in `app/page.tsx`.
 
 ## Architecture
 
-**TimeSlot** is a task scheduling + timer app. Users add tasks, which are auto-scheduled into today's calendar. They can then start a timer against any pending task.
+**TimeSlot** is a task scheduling + timer app. Users add tasks, which are auto-scheduled into their calendar using an LLM. They can then start a timer against any pending task.
 
 ### Page layout (`app/page.tsx`)
 
-Full-screen three-zone layout:
-1. **Header** — logo, Google Calendar placeholder button, "Start Timer" button
+Full-screen layout:
+1. **Header** — logo, Google Calendar status button (connect/sync/reconnect), "Start Timer" button, user avatar/menu
 2. **Stats bar** — `StatsCards` polls `/api/tasks/stats` every 30s
-3. **Two-column main** — left: `TaskForm` (always-visible inline panel), right: `ScheduleView` (today's hourly calendar)
+3. **Two-column main** — left: upcoming task list with quick-complete checkmarks; right: `ScheduleView` (hourly calendar with task blocks and GCal event overlays)
+4. **FAB** (`+` button, bottom-right) — opens `TaskDrawer`
 
-Floating overlays: `CornerTimerWidget` (active timer only), `TimerSelector` modal (task picker), `CompletionPopup` (post-completion stats).
+Floating overlays:
+- `CornerTimerWidget` — active timer controls (renders `null` when idle)
+- `TimerSelector` — modal task picker (opens from "Start Timer")
+- `CompletionPopup` — post-completion stats
+- `TaskDrawer` — slide-up drawer with `TaskForm` (single or batch mode)
 
-### Timer state machine (`lib/timerService.ts`)
+### LLM Auto-scheduling (`app/api/tasks/create/route.ts`, `lib/scheduleUtils.ts`)
 
-The timer is a client-side singleton backed by **localStorage** (key: `timeslot_timer`) with a 30-second background sync to Supabase. States: `WORKING → PAUSED → WORKING`, `WORKING → ON_BREAK → WORKING`. Elapsed time is always derived from wall-clock timestamps, never from a counter.
+New tasks are scheduled via `scheduleWithLLM()`:
+1. Fetches existing tasks + Google Calendar events for today + tomorrow as context
+2. Calls GPT-4o-mini with a structured prompt (rules: 7am–9pm, no overlaps, respect deadlines, start ≥10 min from now)
+3. **Validates** the LLM result against `busyIntervals` — if the result overlaps anything, it falls back automatically
+4. Falls back to `fallbackSchedule()` (deterministic free-slot finder) if: API key missing, LLM errors, or overlap detected
 
-Key invariant: **localStorage is authoritative**. All state mutations write to localStorage first, then fire API calls fire-and-forget. The next `/api/timer/sync` call corrects any DB divergence.
+`fallbackSchedule()` in `lib/scheduleUtils.ts`: sorts busy intervals, walks forward from now+10min to find the first gap, falls back to 8am tomorrow if no slot before 9pm.
 
-`CornerTimerWidget` calls `timer.restoreTimerOnLoad()` on mount (handles stale breaks >2h) and drives a 1-second `setInterval` to re-read display state. It renders `null` when idle — the "Start Timer" button in the header opens `TimerSelector` instead.
+### Batch Scheduling (`app/api/tasks/batch-create/route.ts`, `components/TaskDrawer.tsx`)
 
-### Auto-scheduling (`app/api/tasks/create/route.ts`)
-
-Simple v1: new tasks are placed immediately after the last scheduled task today (or at `now` if the calendar is empty). If no room before 9pm, it schedules for 8am the next day. `scheduled_end = scheduled_start + estimated_minutes`. A proper free-slot algorithm (Phase 4) will replace this.
+Users can queue multiple tasks and schedule them all at once:
+- `TaskDrawer` has a "Batch" toggle — in batch mode, form collects tasks into a local queue without API calls
+- Clicking "Schedule All N Tasks" calls `POST /api/tasks/batch-create`
+- The batch API fetches busy intervals **once**, then makes **one LLM call** for all tasks together (fewer API calls than N individual creates)
+- Each LLM result is validated for overlaps; falls back per-task if needed
+- All tasks are bulk-inserted in one DB call; GCal events are created in parallel
 
 ### Google Calendar integration (`lib/googleCalendar.ts`, `app/api/calendar/`)
 
-OAuth 2.0 flow using `googleapis` package. Credentials live in `google-calendar-mcp/gcp-oauth.keys.json` and are referenced via env vars.
+OAuth 2.0 via `googleapis`. Credentials in `google-calendar-mcp/gcp-oauth.keys.json`, referenced by env vars.
 
-- `GET /api/calendar/oauth` — redirects user to Google consent screen
-- `GET /api/calendar/callback` — receives auth code, stores tokens in `user_tokens`, triggers an immediate sync
-- `GET /api/calendar/status` — returns `{ connected: bool }` by checking for a stored access token
-- `POST /api/calendar/sync` — fetches today's primary calendar events from Google, upserts into `calendar_events`; automatically persists refreshed tokens
-- `GET /api/calendar/events` — returns cached `calendar_events` rows for today, ordered by start time
+**Shared helpers in `lib/googleCalendar.ts`:**
+- `createOAuthClient()` — builds an `OAuth2Client`
+- `getCalendarClient(supabase, userId)` — fetches stored tokens, returns authenticated `calendar` client or `null` if not connected
+- `deleteCalendarEvent(calendar, eventId)` — non-fatal event deletion (logs on error)
 
-**Setup checklist before the OAuth flow works:**
-1. Run migration `004_calendar_tables.sql` in the Supabase SQL editor
-2. Add `http://localhost:3000/api/calendar/callback` as an authorized redirect URI in Google Cloud Console
+**API routes:**
+- `GET /api/calendar/oauth` — redirects to Google consent screen
+- `GET /api/calendar/callback` — exchanges code for tokens, stores in `user_tokens`, triggers sync
+- `GET /api/calendar/status` — returns `{ connected: bool }`
+- `POST /api/calendar/sync` — fetches today+tomorrow events from Google, upserts `calendar_events`; auto-persists refreshed tokens
+- `GET /api/calendar/events` — returns cached `calendar_events` for today
+
+**GCal event lifecycle (full):**
+- **Create**: when a task is created, a GCal event is inserted and the returned `event.id` is stored in `tasks.google_event_id`
+- **Reschedule**: `POST /api/tasks/reschedule` deletes the old GCal event and inserts a new one; updates `tasks.google_event_id`
+- **Complete**: both `/api/timer/complete` and `/api/tasks/[id]/complete` delete the GCal event using the stored `google_event_id`
+- All GCal operations are non-fatal — task operations succeed even if GCal calls fail
+
+**Auto-resync:** `app/page.tsx` syncs GCal every 5 minutes when connected, then calls `POST /api/tasks/reschedule` to fix any conflicts that appeared.
+
+**Setup checklist:**
+1. Run all migrations through `007` in the Supabase SQL editor
+2. Add `http://localhost:3000/api/calendar/callback` as an authorized redirect URI in GCP Console
+3. Add `http://localhost:3000/auth/callback` to Supabase Auth → URL Configuration → Redirect URLs
+
+### Calendar blocks (`app/api/blocks/`, `components/ScheduleView.tsx`)
+
+Users can add manual busy blocks from `ScheduleView` (right panel). Stored in `calendar_blocks` table. Also mirrored to GCal if connected. Accepts `?date=YYYY-MM-DD` query param.
+
+### Conflict rescheduling (`app/api/tasks/reschedule/route.ts`)
+
+Called after every calendar sync. Fetches pending tasks for today+tomorrow, checks each against GCal busy events, and for any conflict: finds a new free slot with `fallbackSchedule()`, deletes the old GCal event, creates a new one, and updates the task in DB.
+
+### Timer state machine (`lib/timerService.ts`)
+
+Client-side singleton backed by **localStorage** (key: `timeslot_timer`) with 30-second background sync to Supabase. States: `WORKING → PAUSED → WORKING`, `WORKING → ON_BREAK → WORKING`. Elapsed time is derived from wall-clock timestamps, never from a counter.
+
+Key invariant: **localStorage is authoritative**. All mutations write to localStorage first; API calls are fire-and-forget. The next `/api/timer/sync` corrects any DB divergence.
+
+`CornerTimerWidget` calls `timer.restoreTimerOnLoad()` on mount (auto-ends stale breaks >2h) and drives a 1-second `setInterval` to refresh display state.
+
+**Timer API routes:**
+- `POST /api/timer/start` — upserts `active_timers`
+- `POST /api/timer/pause` — updates timer state
+- `POST /api/timer/sync` — keeps DB in sync with localStorage state
+- `POST /api/timer/complete` — marks task completed, deletes `active_timers` row, bulk-inserts `timer_sessions`, deletes GCal event
+
+### Browser Notifications (`lib/notifications.ts`, `app/page.tsx`)
+
+Three notification types, all using localStorage keys to prevent duplicates:
+- **15-minute warning**: `checkTaskStartingSoon(tasks)` — fires when a pending task's `scheduled_start` is 13–17 min away. Called every minute via `setInterval`.
+- **Deadline warning**: `checkDeadlineApproaching(tasks)` — fires if a non-completed task's deadline is tomorrow. Called on task load/change.
+- **Morning summary**: `sendMorningSummary(tasks, dateKey)` — fires at 8am with today's task count and first task. Handled via `setTimeout` until 8am if page loads before then.
+
+Permission is requested once on mount via `requestPermission()`.
 
 ### Database schema
 
-Five tables in Supabase:
-- **`tasks`** — `title, description, tag, priority, estimated_minutes, actual_duration, deadline, scheduled_start, scheduled_end, status`
-- **`active_timers`** — one row per user (UNIQUE on `user_id`). Upserted on timer start.
-- **`timer_sessions`** — individual work/break segments; bulk-inserted on task completion.
-- **`user_tokens`** — Google OAuth tokens per user (`google_access_token`, `google_refresh_token`, `google_token_expiry`)
-- **`calendar_events`** — read-only cache of Google Calendar events (`google_event_id`, `title`, `start_time`, `end_time`, `is_busy`)
+Six tables in Supabase (migrations in `supabase/migrations/`, run manually in order):
 
-Migrations are in `supabase/migrations/` and must be run manually in the Supabase SQL editor (not via CLI). Run them in order: `001` → `002` → `003` → `004`.
+| Table | Key columns |
+|-------|-------------|
+| `tasks` | `id, user_id, title, description, tag, priority, estimated_minutes, actual_duration, deadline, scheduled_start, scheduled_end, status, google_event_id` |
+| `active_timers` | `user_id (UNIQUE), task_id, state, started_at, paused_at, current_break_started_at, total_break_seconds` |
+| `timer_sessions` | `task_id, user_id, type (work/break), started_at, ended_at, duration` |
+| `user_tokens` | `user_id, google_access_token, google_refresh_token, google_token_expiry` |
+| `calendar_events` | `user_id, google_event_id, title, start_time, end_time, is_busy` — read-only GCal cache |
+| `calendar_blocks` | `user_id, title, start_time, end_time, is_busy` — user-created manual blocks |
 
-### Color system
+**Migration order** (run in Supabase SQL editor, not CLI):
+1. `001_initial.sql` — base schema
+2. `002_add_scheduled_time.sql` — adds `scheduled_start`
+3. `003_add_task_fields.sql` — adds `description, tag, priority, scheduled_end`
+4. `004_calendar_tables.sql` — adds `user_tokens`, `calendar_events`
+5. `005_fix_tag_constraint.sql` — fixes tag CHECK constraint
+6. `006_calendar_blocks.sql` — adds `calendar_blocks` + RLS
+7. `007_add_google_event_id.sql` — adds `google_event_id TEXT` to `tasks`
+
+### Tag / color system
+
+`lib/tagColors.ts` maps tag names → `{ hex, bg, text, border, gcalColorId }`. Tags: Study, Work, Personal, Exercise, Health, Social, Errands, Other.
 
 Custom Tailwind palette in `tailwind.config.ts`:
-- `teal-{50–900}` — primary brand colors (`teal-600` = `#027381` is the main action color)
+- `teal-{50–900}` — primary brand (`teal-600` = `#027381` is the main action color)
 - `surface-{50–900}` — neutral grays for backgrounds, borders, text
 
 Use `teal-600` / `hover:teal-700` for primary buttons. Use `surface-*` for all neutral UI.
 
-## Planned features (not yet implemented)
+### Key file index
 
-- **Google Calendar display** (Phase 3 remainder): Surface cached `calendar_events` as read-only blocks in `ScheduleView`; wire up the header "Google Calendar" button to trigger the OAuth flow
-- **LLM duration estimation** (Phase 4): OpenAI call when user submits without a manual duration estimate; stored with `llm_estimated = true`
-- **Smart auto-scheduling** (Phase 4): Replace the simple append logic with a real free-slot finder that respects Google Calendar events and deadlines
+| File | Purpose |
+|------|---------|
+| `app/page.tsx` | Main dashboard, calendar sync loop, notification setup |
+| `app/login/page.tsx` | Google sign-in page |
+| `app/auth/callback/route.ts` | Supabase OAuth code exchange |
+| `middleware.ts` | Auth guard — redirects unauthenticated to `/login` |
+| `app/api/tasks/create/route.ts` | LLM scheduling + GCal event creation |
+| `app/api/tasks/batch-create/route.ts` | Batch scheduling (one LLM call for N tasks) |
+| `app/api/tasks/reschedule/route.ts` | Conflict detection + GCal event replace |
+| `app/api/tasks/[id]/complete/route.ts` | Quick-complete (no timer) + GCal cleanup |
+| `app/api/timer/complete/route.ts` | Timer completion + GCal cleanup |
+| `app/api/calendar/sync/route.ts` | Fetch GCal events → cache in `calendar_events` |
+| `lib/googleCalendar.ts` | OAuth client, `getCalendarClient()`, `deleteCalendarEvent()` |
+| `lib/scheduleUtils.ts` | `fallbackSchedule()` deterministic free-slot finder |
+| `lib/timerService.ts` | localStorage timer state machine + 30s DB sync |
+| `lib/notifications.ts` | Browser notification helpers |
+| `lib/tagColors.ts` | Tag → color mapping |
+| `lib/supabase.ts` | Browser Supabase client singleton |
+| `lib/supabase-server.ts` | `createSupabaseServer()` + `getAuthUser()` for API routes |
+| `components/TaskDrawer.tsx` | Slide-up drawer with single/batch mode toggle |
+| `components/TaskForm.tsx` | Task creation form; supports `onQueue` prop for batch mode |
+| `components/ScheduleView.tsx` | Hourly calendar grid with task blocks + GCal overlays |
+| `components/CornerTimerWidget.tsx` | Floating active timer display |
+| `components/TimerSelector.tsx` | Modal to pick which task to time |
+| `types/timer.ts` | Shared TypeScript interfaces (`TaskRow`, `TimerDisplayState`, etc.) |
+
+## Planned / future work
+
+- **LLM duration estimation**: Call OpenAI when user submits without a manual duration; store with `llm_estimated = true`
+- **Smarter batch scheduling**: Let users reorder the batch queue before submitting to influence scheduling priority
+- **Task editing**: UI to edit title/deadline/duration of existing pending tasks (would need to update GCal event too)
+- **Vercel deployment**: Add all env vars to Vercel project settings
