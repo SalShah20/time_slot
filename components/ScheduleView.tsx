@@ -217,13 +217,23 @@ export default function ScheduleView({
     return () => clearInterval(id);
   }, [isToday]);
 
-  // Scroll to current time on mount (today only)
+  // Scroll to a smart position whenever the viewed date changes.
+  // Today → current time. Other days → first scheduled task, or 8 AM default.
+  const selectedDateKey = `${selectedDate.getFullYear()}-${selectedDate.getMonth()}-${selectedDate.getDate()}`;
   useEffect(() => {
-    if (gridRef.current && timeTop !== null) {
+    if (!gridRef.current) return;
+    if (isToday && timeTop !== null) {
       gridRef.current.scrollTop = Math.max(0, timeTop - 80);
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const firstTask = [...viewTasks].sort(
+      (a, b) => new Date(a.scheduled_start!).getTime() - new Date(b.scheduled_start!).getTime(),
+    )[0];
+    gridRef.current.scrollTop = firstTask
+      ? Math.max(0, topForTime(firstTask.scheduled_start!) - 80)
+      : 8 * HOUR_HEIGHT; // default 8 AM
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDateKey]);
 
   const totalHours = END_HOUR - START_HOUR;
   const gridHeight = totalHours * HOUR_HEIGHT;
@@ -263,45 +273,63 @@ export default function ScheduleView({
   ];
   const layout = assignColumns(layoutEntries);
 
-  // Build tomorrow Date for toggle
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
+  // Prev / next day helpers
+  const prevDay = new Date(selectedDate);
+  prevDay.setDate(prevDay.getDate() - 1);
+  const nextDay = new Date(selectedDate);
+  nextDay.setDate(nextDay.getDate() + 1);
+
+  const isTomorrow = isSameDay(selectedDate, (() => { const t = new Date(today); t.setDate(t.getDate() + 1); return t; })());
+  const dayLabel = isToday ? 'Today' : isTomorrow ? 'Tomorrow' : null;
 
   return (
     <div className="h-full flex flex-col">
       {/* Date header */}
       <div className="flex items-center justify-between px-5 py-3.5 border-b border-surface-200 bg-white flex-shrink-0">
-        <div>
-          <h2 className="text-base font-bold text-surface-900">
-            {isToday ? "Today's Schedule" : "Tomorrow's Schedule"}
-          </h2>
-          <p className="text-xs text-surface-500">{formatDateHeader(selectedDate)}</p>
+        {/* Date nav: ← date → */}
+        <div className="flex items-center gap-1.5">
+          {onDateChange && (
+            <button
+              onClick={() => onDateChange(prevDay)}
+              className="w-7 h-7 flex items-center justify-center rounded-lg text-surface-400 hover:text-surface-700 hover:bg-surface-100 transition-colors"
+              aria-label="Previous day"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+          )}
+          <div>
+            <div className="flex items-baseline gap-1.5">
+              <h2 className="text-base font-bold text-surface-900">
+                {formatDateHeader(selectedDate)}
+              </h2>
+              {dayLabel && (
+                <span className="text-xs font-medium text-teal-600">{dayLabel}</span>
+              )}
+            </div>
+          </div>
+          {onDateChange && (
+            <button
+              onClick={() => onDateChange(nextDay)}
+              className="w-7 h-7 flex items-center justify-center rounded-lg text-surface-400 hover:text-surface-700 hover:bg-surface-100 transition-colors"
+              aria-label="Next day"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-2">
-          {/* Today / Tomorrow toggle */}
-          {onDateChange && (
-            <div className="flex rounded-lg border border-surface-200 overflow-hidden text-xs font-medium">
-              <button
-                onClick={() => onDateChange(today)}
-                className={`px-3 py-1.5 transition-colors ${
-                  isToday
-                    ? 'bg-teal-600 text-white'
-                    : 'text-surface-600 hover:bg-surface-50'
-                }`}
-              >
-                Today
-              </button>
-              <button
-                onClick={() => onDateChange(tomorrow)}
-                className={`px-3 py-1.5 border-l border-surface-200 transition-colors ${
-                  !isToday
-                    ? 'bg-teal-600 text-white'
-                    : 'text-surface-600 hover:bg-surface-50'
-                }`}
-              >
-                Tomorrow
-              </button>
-            </div>
+          {/* Jump to today */}
+          {onDateChange && !isToday && (
+            <button
+              onClick={() => onDateChange(today)}
+              className="px-2.5 py-1 rounded-lg border border-surface-200 text-xs font-medium text-surface-600 hover:bg-surface-50 transition-colors"
+            >
+              Today
+            </button>
           )}
 
           {viewTasks.length > 0 && (
