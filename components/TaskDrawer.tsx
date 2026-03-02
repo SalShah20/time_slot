@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import TaskForm, { type TaskInput } from '@/components/TaskForm';
+import BrainDumpInput from '@/components/BrainDumpInput';
 import type { TaskRow } from '@/types/timer';
 
 interface Props {
@@ -12,10 +13,14 @@ interface Props {
 }
 
 export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreated }: Props) {
-  const [batchMode, setBatchMode]     = useState(true);
-  const [queue, setQueue]             = useState<TaskInput[]>([]);
-  const [submitting, setSubmitting]   = useState(false);
-  const [batchError, setBatchError]   = useState<string | null>(null);
+  // batchMode = true → queue tasks then schedule all
+  // batchMode = false → quick add (immediate scheduling, one task)
+  const [batchMode, setBatchMode]         = useState(true);
+  // inputMode only applies in batch mode
+  const [inputMode, setInputMode]         = useState<'braindump' | 'detailed'>('braindump');
+  const [queue, setQueue]                 = useState<TaskInput[]>([]);
+  const [submitting, setSubmitting]       = useState(false);
+  const [batchError, setBatchError]       = useState<string | null>(null);
 
   // Close on Escape
   useEffect(() => {
@@ -24,10 +29,11 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
     return () => document.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  // Reset batch state when drawer closes (keep batch mode as default)
+  // Reset state when drawer closes
   useEffect(() => {
     if (!open) {
       setBatchMode(true);
+      setInputMode('braindump');
       setQueue([]);
       setBatchError(null);
     }
@@ -38,8 +44,14 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
     onClose();
   };
 
+  // Add one task from the structured form
   const handleAddToQueue = (task: TaskInput) => {
     setQueue((prev) => [...prev, task]);
+  };
+
+  // Add multiple tasks from the brain dump parser
+  const handleAddManyToQueue = (tasks: TaskInput[]) => {
+    setQueue((prev) => [...prev, ...tasks]);
   };
 
   const handleRemoveFromQueue = (index: number) => {
@@ -59,7 +71,6 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
       });
-      // Parse once: safely handle non-JSON responses (e.g. 500 HTML error pages)
       let data: Record<string, unknown> = {};
       try { data = await res.json() as Record<string, unknown>; } catch { /* non-JSON */ }
       if (!res.ok) {
@@ -98,36 +109,74 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
           open ? 'translate-y-0' : 'translate-y-full'
         }`}
       >
-        {/* Handle bar */}
+        {/* Handle */}
         <div className="flex justify-center pt-3 pb-1 flex-shrink-0">
           <div className="w-10 h-1 bg-surface-200 rounded-full" />
         </div>
 
-        {/* Drawer header */}
+        {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-surface-100 flex-shrink-0">
           <div>
             <h2 className="text-base font-bold text-surface-900">
-              {batchMode ? 'Batch Add Tasks' : 'Add New Task'}
+              {batchMode ? 'Add Tasks' : 'Quick Add'}
             </h2>
             <p className="text-xs text-surface-500 mt-0.5">
               {batchMode
-                ? `${queue.length} task${queue.length !== 1 ? 's' : ''} in queue — schedule all at once`
-                : 'Auto-schedules into your free time'}
+                ? queue.length > 0
+                  ? `${queue.length} task${queue.length !== 1 ? 's' : ''} queued — schedule all at once`
+                  : 'Queue tasks then schedule together'
+                : 'Schedule one task immediately'}
             </p>
           </div>
+
           <div className="flex items-center gap-2">
-            {/* Batch mode toggle */}
+            {/* Batch input-mode tabs (only in batch mode) */}
+            {batchMode && (
+              <div className="flex items-center bg-surface-100 rounded-full p-0.5 gap-0.5">
+                <button
+                  onClick={() => setInputMode('braindump')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                    inputMode === 'braindump'
+                      ? 'bg-white text-teal-700 shadow-sm'
+                      : 'text-surface-500 hover:text-surface-700'
+                  }`}
+                  title="Type tasks naturally — AI parses them"
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                  </svg>
+                  AI
+                </button>
+                <button
+                  onClick={() => setInputMode('detailed')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                    inputMode === 'detailed'
+                      ? 'bg-white text-teal-700 shadow-sm'
+                      : 'text-surface-500 hover:text-surface-700'
+                  }`}
+                  title="Fill out a structured form"
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                  </svg>
+                  Form
+                </button>
+              </div>
+            )}
+
+            {/* Batch / Quick toggle */}
             <button
               onClick={() => { setBatchMode((v) => !v); setQueue([]); setBatchError(null); }}
               className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
-                batchMode
+                !batchMode
                   ? 'border-teal-500 bg-teal-50 text-teal-700'
                   : 'border-surface-200 text-surface-500 hover:border-surface-300 hover:bg-surface-50'
               }`}
-              title={batchMode ? 'Switch to quick-add (schedules one task immediately)' : 'Switch to batch mode (queue tasks, schedule all at once)'}
+              title={batchMode ? 'Switch to quick-add (schedules immediately)' : 'Switch to batch mode (queue then schedule all)'}
             >
-              {batchMode ? 'Queue Mode' : 'Quick Add'}
+              {batchMode ? 'Quick Add' : 'Batch Mode'}
             </button>
+
             <button
               onClick={onClose}
               className="w-8 h-8 flex items-center justify-center rounded-full text-surface-400 hover:text-surface-600 hover:bg-surface-100 transition-colors text-xl leading-none"
@@ -138,9 +187,9 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
           </div>
         </div>
 
-        {/* Batch queue list */}
+        {/* Queue list */}
         {batchMode && queue.length > 0 && (
-          <div className="px-5 py-3 border-b border-surface-100 flex-shrink-0 space-y-2 max-h-40 overflow-y-auto">
+          <div className="px-5 py-3 border-b border-surface-100 flex-shrink-0 space-y-2 max-h-44 overflow-y-auto">
             {queue.map((task, i) => (
               <div key={i} className="flex items-center gap-2 bg-surface-50 rounded-lg px-3 py-2">
                 <div className="flex-1 min-w-0">
@@ -163,16 +212,32 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
           </div>
         )}
 
-        {/* Form — scrollable */}
+        {/* Input area */}
         <div className="flex-1 overflow-y-auto pb-2">
-          <TaskForm
-            onTaskCreated={handleTaskCreated}
-            hideHeader
-            onQueue={batchMode ? handleAddToQueue : undefined}
-          />
+          {batchMode ? (
+            inputMode === 'braindump' ? (
+              <div className="px-5 py-4">
+                <BrainDumpInput
+                  onTasksQueued={handleAddManyToQueue}
+                  onSwitchToForm={() => setInputMode('detailed')}
+                />
+              </div>
+            ) : (
+              <TaskForm
+                onTaskCreated={handleTaskCreated}
+                hideHeader
+                onQueue={handleAddToQueue}
+              />
+            )
+          ) : (
+            <TaskForm
+              onTaskCreated={handleTaskCreated}
+              hideHeader
+            />
+          )}
         </div>
 
-        {/* Batch submit footer */}
+        {/* Batch schedule footer */}
         {batchMode && (
           <div className="px-5 py-4 border-t border-surface-100 flex-shrink-0 space-y-2">
             {batchError && (
@@ -186,7 +251,7 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
               {submitting
                 ? 'Scheduling…'
                 : queue.length === 0
-                ? 'Add tasks to queue above'
+                ? 'Parse or add tasks above'
                 : `Schedule All ${queue.length} Task${queue.length !== 1 ? 's' : ''}`}
             </button>
           </div>
