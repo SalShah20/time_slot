@@ -9,6 +9,7 @@ import CornerTimerWidget from '@/components/CornerTimerWidget';
 import TimerSelector from '@/components/TimerSelector';
 import CompletionPopup from '@/components/CompletionPopup';
 import TaskDrawer from '@/components/TaskDrawer';
+import TaskEditModal from '@/components/TaskEditModal';
 import OnboardingTooltip from '@/components/OnboardingTooltip';
 import InstallPrompt from '@/components/InstallPrompt';
 import * as timer from '@/lib/timerService';
@@ -33,6 +34,7 @@ export default function Home() {
   const [calendarConnected, setCalendarConnected] = useState(false);
   const [calendarSyncError, setCalendarSyncError] = useState(false);
   const [showDrawer, setShowDrawer]               = useState(false);
+  const [editingTask, setEditingTask]             = useState<TaskRow | null>(null);
   const [toast, setToast]                         = useState<string | null>(null);
   const [showUserMenu, setShowUserMenu]           = useState(false);
   const [selectedDate, setSelectedDate]           = useState(new Date());
@@ -71,7 +73,12 @@ export default function Home() {
       setCalendarConnected(true);
       window.history.replaceState({}, '', '/');
       // Explicitly sync + refresh blocks after OAuth return
-      fetch('/api/calendar/sync', { method: 'POST' })
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      fetch('/api/calendar/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timezone: tz }),
+      })
         .then(() => fetchBlocks())
         .catch(() => null);
     }
@@ -96,8 +103,13 @@ export default function Home() {
   }, [selectedDate]);
 
   const syncCalendar = useCallback(async () => {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     try {
-      const res = await fetch('/api/calendar/sync', { method: 'POST' });
+      const res = await fetch('/api/calendar/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timezone: tz }),
+      });
       if (res.status === 401) {
         setCalendarSyncError(true);
         return;
@@ -106,7 +118,11 @@ export default function Home() {
       await fetchBlocks();
 
       // After syncing, reschedule any pending tasks that now conflict with calendar events
-      const rescheduleRes = await fetch('/api/tasks/reschedule', { method: 'POST' });
+      const rescheduleRes = await fetch('/api/tasks/reschedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timezone: tz }),
+      });
       if (rescheduleRes.ok) {
         const { rescheduled } = await rescheduleRes.json() as { rescheduled: number };
         if (rescheduled > 0) {
@@ -480,7 +496,13 @@ export default function Home() {
                           )}
                         </button>
 
-                        <div className="flex-1 min-w-0">
+                        {/* Clickable task info — opens edit modal */}
+                        <button
+                          type="button"
+                          className="flex-1 min-w-0 text-left"
+                          onClick={() => setEditingTask(task)}
+                          title="Click to edit task"
+                        >
                           <p className={`text-sm font-medium truncate ${isDone ? 'line-through text-surface-400' : 'text-surface-900'}`}>
                             {task.title}
                           </p>
@@ -493,7 +515,7 @@ export default function Home() {
                           {task.tag && (
                             <span className="text-xs text-teal-600 mt-0.5 inline-block">{task.tag}</span>
                           )}
-                        </div>
+                        </button>
 
                         <span className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-medium mt-0.5 ${
                           task.status === 'in_progress'
@@ -522,6 +544,7 @@ export default function Home() {
             onDateChange={setSelectedDate}
             onAddBlock={handleAddBlock}
             onDeleteBlock={handleDeleteBlock}
+            onEditTask={setEditingTask}
           />
         </main>
       </div>
@@ -547,6 +570,13 @@ export default function Home() {
         onClose={() => setShowDrawer(false)}
         onTaskCreated={handleTaskCreated}
         onTasksCreated={handleTasksCreated}
+      />
+
+      {/* ── Task edit modal ────────────────────────────────────────────────── */}
+      <TaskEditModal
+        task={editingTask}
+        onClose={() => setEditingTask(null)}
+        onSave={() => { setEditingTask(null); void fetchTasks(); }}
       />
 
       {/* ── Toast ─────────────────────────────────────────────────────────── */}

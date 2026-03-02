@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 import { getCalendarClient } from '@/lib/googleCalendar';
 import { getTagColor } from '@/lib/tagColors';
-import { fallbackSchedule } from '@/lib/scheduleUtils';
+import { fallbackSchedule, localHourIn } from '@/lib/scheduleUtils';
 import type { BusyInterval } from '@/lib/scheduleUtils';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { estimateDurationWithLLM } from '@/lib/estimateDuration';
@@ -19,6 +19,7 @@ async function scheduleWithLLM(
     deadline?: string;
     priority?: string;
   },
+  timezone: string,
 ): Promise<{ scheduled_start: string; scheduled_end: string }> {
   const now        = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
@@ -61,11 +62,11 @@ async function scheduleWithLLM(
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     console.warn('[scheduleWithLLM] OPENAI_API_KEY not set — using fallback');
-    return fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline);
+    return fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone);
   }
 
   const localTime = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Los_Angeles',
+    timeZone: timezone,
     weekday: 'short', month: 'short', day: 'numeric',
     hour: 'numeric', minute: '2-digit', hour12: true,
   }).format(now);
@@ -82,7 +83,7 @@ CALENDAR EVENTS (today & tomorrow):
 ${JSON.stringify(calEvents ?? [])}
 
 RULES:
-1. Schedule between 7am and 11pm. Never use the 12am–7am window. If the deadline is sooner, schedule ASAP. After 11pm (but before midnight) is only acceptable as an absolute last resort when no earlier slot exists before the deadline.
+1. Schedule ONLY between 7 AM and 11 PM in the user's local timezone (${timezone}). Never use the 12 AM–7 AM window under any circumstances. If today is too full, schedule for tomorrow morning.
 2. Task end time MUST be before or at deadline
 3. If deadline is today, schedule ASAP — do not push to tomorrow
 4. Avoid overlapping existing tasks and calendar events
@@ -123,6 +124,16 @@ Respond ONLY with this JSON (no extra text):
 
     let scheduledEnd = new Date(scheduledStart.getTime() + task.estimatedMinutes * 60_000);
 
+    // Validate: LLM result must be within work hours (7 AM – 11 PM in user's timezone)
+    const startH    = localHourIn(scheduledStart, timezone);
+    const endH      = localHourIn(scheduledEnd,   timezone);
+    const crossDay  = new Intl.DateTimeFormat('sv', { timeZone: timezone }).format(scheduledEnd) !==
+                      new Intl.DateTimeFormat('sv', { timeZone: timezone }).format(scheduledStart);
+    if (startH < 7 || endH > 23 || crossDay) {
+      console.warn(`[scheduleWithLLM] LLM returned out-of-hours time ${scheduledStart.toISOString()} for "${task.title}" — falling back`);
+      return fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone);
+    }
+
     // Safety: never schedule end past deadline
     if (task.deadline) {
       const dl = new Date(task.deadline);
@@ -146,7 +157,7 @@ Respond ONLY with this JSON (no extra text):
       console.warn(
         '[scheduleWithLLM] LLM result overlaps existing schedule for "' + task.title + '" — falling back to deterministic scheduler',
       );
-      return fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline);
+      return fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone);
     }
 
     return {
@@ -155,7 +166,7 @@ Respond ONLY with this JSON (no extra text):
     };
   } catch (err) {
     console.error('[scheduleWithLLM] Error, falling back to simple scheduler:', err);
-    return fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline);
+    return fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone);
   }
 }
 
@@ -170,6 +181,7 @@ export async function POST(req: NextRequest) {
     estimatedMinutes,
     priority,
     deadline,
+    timezone = 'UTC',
   } = await req.json() as {
     title: string;
     description?: string;
@@ -177,6 +189,7 @@ export async function POST(req: NextRequest) {
     estimatedMinutes: number;
     priority?: string;
     deadline?: string;
+    timezone?: string;
   };
 
   if (!title) {
@@ -195,6 +208,7 @@ export async function POST(req: NextRequest) {
     supabase,
     user.id,
     { title, description, estimatedMinutes: finalEstimatedMinutes, tag, deadline, priority },
+    timezone,
   );
 
   const baseInsert = {

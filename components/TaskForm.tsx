@@ -122,6 +122,7 @@ export default function TaskForm({ onTaskCreated, hideHeader = false, onQueue }:
           estimatedMinutes: isAiEstimate ? undefined : estimatedMinutes,
           priority,
           deadline:         buildDeadline(),
+          timezone:         Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
       });
 

@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 import { getCalendarClient, deleteCalendarEvent } from '@/lib/googleCalendar';
 import { getTagColor } from '@/lib/tagColors';
@@ -14,9 +14,15 @@ function overlaps(
   return eventStart < taskEnd && eventEnd > taskStart;
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   const user = await getAuthUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  let timezone = 'UTC';
+  try {
+    const body = await req.json() as { timezone?: string };
+    timezone = body.timezone ?? 'UTC';
+  } catch { /* no body */ }
 
   const supabase = createSupabaseServer();
 
@@ -89,6 +95,7 @@ export async function POST() {
       allBusy,
       task.estimated_minutes,
       task.deadline,
+      timezone,
     );
 
     // Delete old GCal event and create a new one with updated time

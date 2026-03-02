@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 import { getCalendarClient } from '@/lib/googleCalendar';
 import { getTagColor } from '@/lib/tagColors';
-import { fallbackSchedule } from '@/lib/scheduleUtils';
+import { fallbackSchedule, localHourIn } from '@/lib/scheduleUtils';
 import type { BusyInterval } from '@/lib/scheduleUtils';
 import { estimateDurationWithLLM } from '@/lib/estimateDuration';
 
@@ -24,17 +24,18 @@ interface ScheduledTask extends TaskInput {
 async function scheduleBatchWithLLM(
   tasks: TaskInput[],
   existingBusy: BusyInterval[],
+  timezone: string,
 ): Promise<ScheduledTask[]> {
   const now = new Date();
   const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey) {
     console.warn('[scheduleBatchWithLLM] OPENAI_API_KEY not set — using fallback for all tasks');
-    return scheduleSequentialFallback(tasks, existingBusy);
+    return scheduleSequentialFallback(tasks, existingBusy, timezone);
   }
 
   const localTime = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Los_Angeles',
+    timeZone: timezone,
     weekday: 'short', month: 'short', day: 'numeric',
     hour: 'numeric', minute: '2-digit', hour12: true,
   }).format(now);
@@ -59,7 +60,7 @@ EXISTING BUSY INTERVALS (tasks + calendar events):
 ${JSON.stringify(busyForPrompt)}
 
 RULES:
-1. Schedule between 7am and 11pm; never use 12am–7am. If a deadline is sooner, schedule ASAP. After 11pm is a last resort only when no earlier slot exists.
+1. Schedule ONLY between 7am and 11pm in the user's local timezone (${timezone}). Never use the 12am–7am window under any circumstances. If today is too full, schedule for tomorrow morning.
 2. Each task's end time MUST be before or at its deadline
 3. Tasks due sooner should generally be scheduled sooner
 4. No overlaps between tasks being scheduled, or with existing busy intervals
@@ -110,7 +111,7 @@ Respond ONLY with a JSON array (no extra text):
 
       if (!slot?.scheduled_start) {
         console.warn(`[scheduleBatchWithLLM] No slot returned for task ${i} ("${task.title}") — falling back`);
-        const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline);
+        const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline, timezone);
         allBusy.push({ start: new Date(fb.scheduled_start), end: new Date(fb.scheduled_end) });
         results.push({ ...task, ...fb });
         continue;
@@ -119,13 +120,26 @@ Respond ONLY with a JSON array (no extra text):
       const scheduledStart = new Date(slot.scheduled_start);
       if (isNaN(scheduledStart.getTime())) {
         console.warn(`[scheduleBatchWithLLM] Invalid start for task ${i} — falling back`);
-        const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline);
+        const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline, timezone);
         allBusy.push({ start: new Date(fb.scheduled_start), end: new Date(fb.scheduled_end) });
         results.push({ ...task, ...fb });
         continue;
       }
 
       let scheduledEnd = new Date(scheduledStart.getTime() + task.estimatedMinutes * 60_000);
+
+      // Validate: LLM result must be within work hours (7 AM – 11 PM in user's timezone)
+      const startH   = localHourIn(scheduledStart, timezone);
+      const endH     = localHourIn(scheduledEnd,   timezone);
+      const crossDay = new Intl.DateTimeFormat('sv', { timeZone: timezone }).format(scheduledEnd) !==
+                       new Intl.DateTimeFormat('sv', { timeZone: timezone }).format(scheduledStart);
+      if (startH < 7 || endH > 23 || crossDay) {
+        console.warn(`[scheduleBatchWithLLM] LLM returned out-of-hours time ${scheduledStart.toISOString()} for task ${i} ("${task.title}") — falling back`);
+        const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline, timezone);
+        allBusy.push({ start: new Date(fb.scheduled_start), end: new Date(fb.scheduled_end) });
+        results.push({ ...task, ...fb });
+        continue;
+      }
 
       // Clamp to deadline
       if (task.deadline) {
@@ -148,7 +162,7 @@ Respond ONLY with a JSON array (no extra text):
       const hasOverlap = allBusy.some((iv) => iv.start < scheduledEnd && iv.end > scheduledStart);
       if (hasOverlap) {
         console.warn(`[scheduleBatchWithLLM] LLM result overlaps for task ${i} ("${task.title}") — falling back`);
-        const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline);
+        const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline, timezone);
         allBusy.push({ start: new Date(fb.scheduled_start), end: new Date(fb.scheduled_end) });
         results.push({ ...task, ...fb });
         continue;
@@ -166,15 +180,15 @@ Respond ONLY with a JSON array (no extra text):
     return results;
   } catch (err) {
     console.error('[scheduleBatchWithLLM] LLM error, falling back for all tasks:', err);
-    return scheduleSequentialFallback(tasks, existingBusy);
+    return scheduleSequentialFallback(tasks, existingBusy, timezone);
   }
 }
 
 /** Fallback: schedule each task sequentially with the deterministic algorithm. */
-function scheduleSequentialFallback(tasks: TaskInput[], initialBusy: BusyInterval[]): ScheduledTask[] {
+function scheduleSequentialFallback(tasks: TaskInput[], initialBusy: BusyInterval[], timezone: string): ScheduledTask[] {
   const busy = [...initialBusy];
   return tasks.map((task) => {
-    const slot = fallbackSchedule(busy, task.estimatedMinutes, task.deadline);
+    const slot = fallbackSchedule(busy, task.estimatedMinutes, task.deadline, timezone);
     busy.push({ start: new Date(slot.scheduled_start), end: new Date(slot.scheduled_end) });
     return { ...task, ...slot };
   });
@@ -184,13 +198,13 @@ export async function POST(req: NextRequest) {
   const user = await getAuthUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  let body: { tasks: TaskInput[] };
+  let body: { tasks: TaskInput[]; timezone?: string };
   try {
-    body = await req.json() as { tasks: TaskInput[] };
+    body = await req.json() as { tasks: TaskInput[]; timezone?: string };
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
-  const { tasks } = body;
+  const { tasks, timezone = 'UTC' } = body;
 
   if (!Array.isArray(tasks) || tasks.length === 0) {
     return NextResponse.json({ error: 'tasks array is required' }, { status: 400 });
@@ -250,7 +264,7 @@ export async function POST(req: NextRequest) {
   ];
 
   // Schedule all tasks together (one LLM call)
-  const scheduled = await scheduleBatchWithLLM(tasksWithDurations, existingBusy);
+  const scheduled = await scheduleBatchWithLLM(tasksWithDurations, existingBusy, timezone);
 
   // Bulk insert all tasks
   const rows = scheduled.map((t) => ({

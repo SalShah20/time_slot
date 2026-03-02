@@ -54,7 +54,10 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
       const res = await fetch('/api/tasks/batch-create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tasks: queue }),
+        body: JSON.stringify({
+          tasks:    queue,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }),
       });
       // Parse once: safely handle non-JSON responses (e.g. 500 HTML error pages)
       let data: Record<string, unknown> = {};

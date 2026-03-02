@@ -66,6 +66,7 @@ interface Props {
   onDateChange?: (date: Date) => void;
   onAddBlock: (block: { title: string; start_time: string; end_time: string }) => Promise<void>;
   onDeleteBlock: (id: string) => Promise<void>;
+  onEditTask?: (task: TaskRow) => void;
 }
 
 function formatHour(h: number): string {
@@ -105,7 +106,7 @@ function isSameDay(a: Date, b: Date): boolean {
   );
 }
 
-function TaskBlock({ task, colStyle }: { task: TaskRow; colStyle?: React.CSSProperties }) {
+function TaskBlock({ task, colStyle, onEdit }: { task: TaskRow; colStyle?: React.CSSProperties; onEdit?: () => void }) {
   const top    = topForTime(task.scheduled_start!);
   const height = heightForMinutes(task.estimated_minutes);
   const tagColor = getTagColor(task.tag);
@@ -127,9 +128,10 @@ function TaskBlock({ task, colStyle }: { task: TaskRow; colStyle?: React.CSSProp
 
   return (
     <div
-      className={`absolute left-14 right-2 rounded-lg border-l-4 px-2.5 py-1.5 overflow-hidden shadow-sm z-10 ${bg} ${borderColor}`}
+      className={`absolute left-14 right-2 rounded-lg border-l-4 px-2.5 py-1.5 overflow-hidden shadow-sm z-10 ${bg} ${borderColor} ${onEdit ? 'cursor-pointer hover:brightness-95' : ''}`}
       style={{ top: `${top}px`, height: `${height}px`, ...colStyle }}
-      title={task.title}
+      title={onEdit ? `${task.title} — click to edit` : task.title}
+      onClick={onEdit}
     >
       <p className="text-xs font-semibold truncate leading-tight">{task.title}</p>
       <div className="flex items-center gap-1.5 mt-0.5">
@@ -204,6 +206,7 @@ export default function ScheduleView({
   onDateChange,
   onAddBlock,
   onDeleteBlock,
+  onEditTask,
 }: Props) {
   const today = new Date();
   const selectedDate = selectedDateProp ?? today;
@@ -493,6 +496,7 @@ export default function ScheduleView({
                     key={task.id}
                     task={task}
                     colStyle={l ? columnStyle(l.col, l.totalCols) : undefined}
+                    onEdit={onEditTask ? () => onEditTask(task) : undefined}
                   />
                 );
               })}

@@ -1,11 +1,18 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
 import { createOAuthClient } from '@/lib/googleCalendar';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
+import { localTimeOnDay } from '@/lib/scheduleUtils';
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   const user = await getAuthUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  let timezone = 'UTC';
+  try {
+    const body = await req.json() as { timezone?: string };
+    timezone = body.timezone ?? 'UTC';
+  } catch { /* no body or non-JSON */ }
 
   const supabase = createSupabaseServer();
 
@@ -43,10 +50,10 @@ export async function POST() {
 
   const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-  // Fetch events for today + tomorrow so the tomorrow view is populated
+  // Fetch events for today + tomorrow (use user's local timezone for date boundaries)
   const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-  const endOfDay   = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2).toISOString();
+  const startOfDay = localTimeOnDay(now, 0, 0, timezone, 0).toISOString();
+  const endOfDay   = localTimeOnDay(now, 0, 0, timezone, 2).toISOString();
 
   console.log('[/api/calendar/sync] Querying Google Calendar:', { startOfDay, endOfDay, serverDate: now.toISOString() });
 
@@ -121,29 +128,56 @@ export async function POST() {
 
   console.log('[/api/calendar/sync] Rows to upsert:', rows.length);
 
-  // Delete cached events for today+tomorrow first so removed events don't linger
-  const { error: deleteError } = await supabase
-    .from('calendar_events')
-    .delete()
-    .eq('user_id', user.id)
-    .gte('start_time', startOfDay)
-    .lt('start_time', endOfDay);
-
-  if (deleteError) {
-    console.error('[/api/calendar/sync] delete error:', deleteError);
-    return NextResponse.json({ error: 'Failed to clear stale events' }, { status: 500 });
-  }
+  // Insert-then-delete-stale strategy: never leave the DB empty during sync.
+  // 1. Remove existing cache entries ONLY for the events we're about to refresh (by ID).
+  // 2. Insert fresh events.
+  // 3. Delete any remaining entries in the date range that Google no longer returned.
+  const freshIds = rows.map((r) => r.google_event_id);
 
   if (rows.length > 0) {
+    // Step 1: clear existing entries for these specific event IDs (prevent duplicates)
+    const { error: delExistingError } = await supabase
+      .from('calendar_events')
+      .delete()
+      .eq('user_id', user.id)
+      .in('google_event_id', freshIds);
+    if (delExistingError) console.warn('[/api/calendar/sync] clear-existing error:', delExistingError);
+
+    // Step 2: insert fresh data
     const { error: insertError } = await supabase
       .from('calendar_events')
       .insert(rows);
-
     if (insertError) {
       console.error('[/api/calendar/sync] insert error:', insertError);
       return NextResponse.json({ error: 'Failed to cache events' }, { status: 500 });
     }
     console.log('[/api/calendar/sync] Insert succeeded');
+  }
+
+  // Step 3: delete stale entries in the date range that Google no longer returned.
+  // For the no-events case this clears the whole range.
+  {
+    // Fetch all IDs currently in the date range so we can filter in JS (avoids PostgREST NOT-IN syntax issues)
+    const { data: existing } = await supabase
+      .from('calendar_events')
+      .select('id, google_event_id')
+      .eq('user_id', user.id)
+      .gte('start_time', startOfDay)
+      .lt('start_time', endOfDay);
+
+    const freshIdSet = new Set(freshIds);
+    const staleRowIds = (existing ?? [])
+      .filter((e) => !freshIdSet.has(e.google_event_id))
+      .map((e) => e.id as string);
+
+    if (staleRowIds.length > 0) {
+      const { error: staleErr } = await supabase
+        .from('calendar_events')
+        .delete()
+        .in('id', staleRowIds);
+      if (staleErr) console.warn('[/api/calendar/sync] stale-delete error:', staleErr);
+      else console.log('[/api/calendar/sync] Removed', staleRowIds.length, 'stale events');
+    }
   }
 
   return NextResponse.json({ synced: rows.length });

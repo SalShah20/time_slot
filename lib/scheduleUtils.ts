@@ -10,59 +10,105 @@ const WORK_END_HOUR   = 23; // 11 PM
 /** Hard blackout: never start a task between midnight and 7 AM. */
 const BLACKOUT_END    = 7;  // 12 AM – 7 AM
 
+// ─── Timezone-aware helpers ────────────────────────────────────────────────
+
 /**
- * Advances `t` into the next valid work-hours window (7 AM – 11 PM).
- * • Before 7 AM  → snaps to 7 AM same day.
- * • At or after 11 PM → snaps to 7 AM next day.
+ * Returns the local hour (0–23 + fractional minutes) for `date` in `tz`.
+ * Always uses the Intl API so it's correct on UTC servers (Vercel).
  */
-function snapToWorkHours(t: Date): Date {
-  const h      = t.getHours() + t.getMinutes() / 60;
-  const result = new Date(t);
-  if (h < WORK_START_HOUR) {
-    result.setHours(WORK_START_HOUR, 0, 0, 0);
-  } else if (h >= WORK_END_HOUR) {
-    result.setDate(result.getDate() + 1);
-    result.setHours(WORK_START_HOUR, 0, 0, 0);
-  }
-  return result;
+export function localHourIn(date: Date, tz: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: false,
+  }).formatToParts(date);
+  const h = Number(parts.find((p) => p.type === 'hour')?.value  ?? 0) % 24;
+  const m = Number(parts.find((p) => p.type === 'minute')?.value ?? 0);
+  return h + m / 60;
 }
+
+/**
+ * Returns the local YYYY-MM-DD string for `date` in `tz`.
+ * Uses 'sv' locale which produces ISO-format dates natively.
+ */
+export function localDateStrIn(date: Date, tz: string): string {
+  return new Intl.DateTimeFormat('sv', { timeZone: tz }).format(date);
+}
+
+/**
+ * Constructs the UTC Date that corresponds to `hour:minute` on the same local day
+ * as `date` (optionally offset by `dayOffset` local days) in `tz`.
+ * Correct across DST transitions.
+ */
+export function localTimeOnDay(date: Date, hour: number, minute: number, tz: string, dayOffset = 0): Date {
+  const [y, m, d] = localDateStrIn(date, tz).split('-').map(Number);
+  // Start from a naive UTC time and correct using the actual timezone offset at that moment.
+  const naive = new Date(Date.UTC(y, m - 1, d + dayOffset, hour, minute, 0));
+  const naiveLocalH = localHourIn(naive, tz);
+  const correction  = (naiveLocalH - (hour + minute / 60)) * 3_600_000;
+  const corrected   = new Date(naive.getTime() - correction);
+  // One verification pass to handle DST edge cases
+  const verifyH = localHourIn(corrected, tz);
+  if (Math.abs(verifyH - (hour + minute / 60)) > 0.1) {
+    const correction2 = (verifyH - (hour + minute / 60)) * 3_600_000;
+    return new Date(corrected.getTime() - correction2);
+  }
+  return corrected;
+}
+
+/**
+ * Advances `t` into the next valid work-hours window (7 AM – 11 PM) in `tz`.
+ * • Before 7 AM  → snaps to 7 AM same local day.
+ * • At or after 11 PM → snaps to 7 AM next local day.
+ */
+function snapToWorkHours(t: Date, tz: string): Date {
+  const h = localHourIn(t, tz);
+  if (h >= WORK_START_HOUR && h < WORK_END_HOUR) return t;
+  if (h < WORK_START_HOUR) return localTimeOnDay(t, WORK_START_HOUR, 0, tz, 0);
+  return localTimeOnDay(t, WORK_START_HOUR, 0, tz, 1); // past 11 PM → next day
+}
+
+// ─── Public API ────────────────────────────────────────────────────────────
 
 /**
  * Deterministic free-slot finder.
  * Finds the earliest gap in `busyIntervals` that fits `estimatedMinutes`,
- * starting no earlier than now+10 min and only within work hours (7 AM – 11 PM).
+ * starting no earlier than now+10 min and only within work hours (7 AM – 11 PM local).
  * Never schedules in the 12 AM – 7 AM blackout window.
  * Falls back to the next work-hours window when today is full.
+ *
+ * @param timezone  IANA timezone string (e.g. "America/New_York"). Defaults to
+ *                  "America/Los_Angeles" for backwards-compat, but you should
+ *                  always pass the user's real timezone so this works on UTC servers.
  */
 export function fallbackSchedule(
   busyIntervals: BusyInterval[],
   estimatedMinutes: number,
   deadline?: string | null,
+  timezone = 'America/Los_Angeles',
 ): { scheduled_start: string; scheduled_end: string } {
   const now    = new Date();
   const sorted = [...busyIntervals].sort((a, b) => a.start.getTime() - b.start.getTime());
 
   // Start within work hours, at least 10 minutes from now
-  let candidate = snapToWorkHours(new Date(now.getTime() + 10 * 60_000));
+  let candidate = snapToWorkHours(new Date(now.getTime() + 10 * 60_000), timezone);
+
+  console.log(
+    `[fallbackSchedule] TZ=${timezone} | start candidate=${candidate.toISOString()} (local ${localHourIn(candidate, timezone).toFixed(1)}h)`
+  );
 
   // Iteratively push past busy intervals, snapping back to work hours after each push.
-  // Guard cap prevents infinite loops (~500 steps covers well over a month of daily searching).
   let changed = true;
   let guard   = 0;
   while (changed && guard < 500) {
     guard++;
     changed = false;
 
-    const end      = new Date(candidate.getTime() + estimatedMinutes * 60_000);
-    const endH     = end.getHours() + end.getMinutes() / 60;
-    const crossDay = end.getDate() !== candidate.getDate() || end.getMonth() !== candidate.getMonth();
+    const end     = new Date(candidate.getTime() + estimatedMinutes * 60_000);
+    const endH    = localHourIn(end, timezone);
+    const crossDay = localDateStrIn(end, timezone) !== localDateStrIn(candidate, timezone);
 
-    // Slot end is past 11 PM or wraps into the next calendar day → jump to next day 7 AM
+    // Slot end is past 11 PM local or wraps into the next local day → next day 7 AM
     if (endH > WORK_END_HOUR || crossDay) {
-      const next = new Date(candidate);
-      next.setDate(next.getDate() + 1);
-      next.setHours(WORK_START_HOUR, 0, 0, 0);
-      candidate = next;
+      candidate = localTimeOnDay(candidate, WORK_START_HOUR, 0, timezone, 1);
       changed   = true;
       continue;
     }
@@ -70,7 +116,7 @@ export function fallbackSchedule(
     // Push past any busy interval that overlaps [candidate, end)
     for (const iv of sorted) {
       if (iv.start < end && iv.end > candidate) {
-        candidate = snapToWorkHours(iv.end); // re-snap after each push — this is the core fix
+        candidate = snapToWorkHours(iv.end, timezone); // re-snap after each push
         changed   = true;
         break;
       }
@@ -83,18 +129,17 @@ export function fallbackSchedule(
     const end = new Date(candidate.getTime() + estimatedMinutes * 60_000);
 
     if (end <= dl) {
-      // Candidate slot fits before deadline ✓
+      console.log(`[fallbackSchedule] ✅ ${candidate.toISOString()} (local ${localHourIn(candidate, timezone).toFixed(1)}h)`);
       return { scheduled_start: candidate.toISOString(), scheduled_end: end.toISOString() };
     }
 
-    // Candidate overshot the deadline (today/tonight is fully packed).
-    // Last resort: place task right before deadline — allowed in 7 AM–midnight window only.
-    // Never place in the 12 AM–7 AM blackout, even as a last resort.
+    // Last resort: place task right before deadline — never in the 12 AM–7 AM blackout.
     const startBeforeDl = new Date(dl.getTime() - estimatedMinutes * 60_000);
-    const startH        = startBeforeDl.getHours() + startBeforeDl.getMinutes() / 60;
-    const inBlackout    = startH < BLACKOUT_END; // 12am–7am hard stop
+    const startH        = localHourIn(startBeforeDl, timezone);
+    const inBlackout    = startH < BLACKOUT_END;
     const hasConflict   = sorted.some((iv) => iv.start < dl && iv.end > startBeforeDl);
     if (startBeforeDl > now && !inBlackout && !hasConflict) {
+      console.log(`[fallbackSchedule] ✅ (pre-deadline) ${startBeforeDl.toISOString()} (local ${startH.toFixed(1)}h)`);
       return {
         scheduled_start: startBeforeDl.toISOString(),
         scheduled_end:   dl.toISOString(),
@@ -102,8 +147,8 @@ export function fallbackSchedule(
     }
   }
 
-  // Return the first available work-hours slot found
   const finalEnd = new Date(candidate.getTime() + estimatedMinutes * 60_000);
+  console.log(`[fallbackSchedule] ✅ ${candidate.toISOString()} (local ${localHourIn(candidate, timezone).toFixed(1)}h)`);
   return {
     scheduled_start: candidate.toISOString(),
     scheduled_end:   finalEnd.toISOString(),
