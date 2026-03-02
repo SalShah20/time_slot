@@ -1,46 +1,34 @@
 # TimeSlot
 
-AI-powered task scheduling for college students. Add your tasks, click **Schedule All**, and GPT-4o-mini automatically fits them into your free calendar time — no manual drag-and-drop needed.
+A task scheduling and timer app for college students. Add tasks, let the LLM schedule them into your calendar, then start a focused timer against any pending task.
 
 ## Features
 
-- **Batch scheduling** — queue up multiple tasks and schedule them all in one AI call
-- **LLM-powered slot selection** — respects deadlines, priorities, existing tasks, and Google Calendar events; no overlaps
-- **Fallback scheduler** — deterministic free-slot finder kicks in when the LLM is unavailable or returns an invalid slot
-- **Scheduling window** — 7 AM to 11 PM (students work late); falls back to 8 AM tomorrow if today is full
-- **Calendar view** — 6 AM to midnight hourly grid with task blocks, manual busy blocks, and Google Calendar overlays
-- **Timer** — start, pause, and complete tasks with a pomodoro-style corner widget
-- **Google Calendar sync** — bidirectional: tasks create GCal events; GCal events block scheduling; auto-reschedules on conflict
-- **Browser notifications** — 15-min task warnings, deadline reminders, 8 AM morning summary
-- **Onboarding tooltip** — first-visit walkthrough for new users
-
-## How It Works
-
-1. **Add tasks** — tap `+`, fill in title / duration / deadline (batch mode is the default)
-2. **Schedule All** — one click sends all queued tasks to the LLM, which returns non-overlapping start times
-3. **Work** — start the timer, get notifications when tasks approach, mark complete with the checkmark
-
-## Tech Stack
-
-- **Next.js 14** (App Router) + TypeScript
-- **Tailwind CSS** with custom `teal-*` and `surface-*` palettes
-- **Supabase** — Postgres DB + Google OAuth auth via `@supabase/ssr`
-- **OpenAI GPT-4o-mini** — LLM scheduling via the Chat Completions API
-- **Google Calendar API** — OAuth 2.0, event CRUD, free/busy queries
+- LLM-powered scheduling (GPT-4o-mini) that places tasks into your day intelligently
+- Google Calendar integration — tasks appear as GCal events and real calendar events are respected
+- Batch task creation — queue multiple tasks and schedule them all in one LLM call
+- Focus timer with work/break tracking and session history
+- Scheduling respects deadlines: preferred window is 7 AM – 11 PM, but tasks can be placed up to 3 AM as a last resort when earlier slots are full (college students work late)
+- Browser notifications for upcoming tasks, deadline warnings, and a morning summary
 
 ## Setup
 
-### 1. Clone & install
+### Prerequisites
+
+- Node.js 18+
+- A Supabase project
+- A Google Cloud project with the Calendar API enabled
+- An OpenAI API key (optional — falls back to deterministic scheduling without it)
+
+### 1. Install dependencies
 
 ```bash
-git clone <repo>
-cd time_slot
 npm install
 ```
 
 ### 2. Environment variables
 
-Create `.env.local`:
+Create `.env.local` at the project root:
 
 ```
 NEXT_PUBLIC_SUPABASE_URL=
@@ -51,88 +39,57 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 OPENAI_API_KEY=
 ```
 
-`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` come from GCP Console (OAuth 2.0 client).
+`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` come from the GCP OAuth 2.0 credentials file.
 
-### 3. Supabase — run migrations in order
+### 3. Supabase
 
-Run each file in the Supabase SQL editor (Dashboard → SQL Editor):
+1. Run migrations in order in the Supabase SQL editor (files are in `supabase/migrations/`):
+   - `001_initial.sql`
+   - `002_add_scheduled_time.sql`
+   - `003_add_task_fields.sql`
+   - `004_calendar_tables.sql`
+   - `005_fix_tag_constraint.sql`
+   - `006_calendar_blocks.sql`
+   - `007_add_google_event_id.sql`
+2. Enable the Google provider under Auth > Providers and add your OAuth credentials.
+3. Add `http://localhost:3000/auth/callback` to Auth > URL Configuration > Redirect URLs.
 
-| File | What it adds |
-|------|-------------|
-| `supabase/migrations/001_initial.sql` | Base schema (tasks, timers, sessions) |
-| `supabase/migrations/002_add_scheduled_time.sql` | `scheduled_start` column |
-| `supabase/migrations/003_add_task_fields.sql` | `description, tag, priority, scheduled_end` |
-| `supabase/migrations/004_calendar_tables.sql` | `user_tokens`, `calendar_events` |
-| `supabase/migrations/005_fix_tag_constraint.sql` | Fixes tag CHECK constraint |
-| `supabase/migrations/006_calendar_blocks.sql` | `calendar_blocks` + RLS |
-| `supabase/migrations/007_add_google_event_id.sql` | `google_event_id TEXT` on tasks |
+### 4. Google Calendar OAuth
 
-### 4. Google OAuth setup
-
-In **GCP Console → APIs & Services → Credentials → OAuth 2.0 Client**:
-- Add `http://localhost:3000/api/calendar/callback` to **Authorized Redirect URIs**
-
-In **Supabase → Authentication → Providers → Google**:
-- Enable Google, paste `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`
-- Copy the Supabase redirect URL shown → add it to GCP Authorized Redirect URIs
-
-In **Supabase → Authentication → URL Configuration**:
-- Add `http://localhost:3000/auth/callback` to **Redirect URLs**
+1. In GCP Console, add `http://localhost:3000/api/calendar/callback` as an authorized redirect URI for your OAuth client.
+2. Copy the client ID and secret into `.env.local`.
 
 ### 5. Run
 
 ```bash
-npm run dev      # http://localhost:3000
-npm run build    # type-check + production build
+npm run dev   # http://localhost:3000
+```
+
+## Commands
+
+```bash
+npm run dev      # Start dev server
+npm run build    # Production build + TypeScript check
 npm run lint     # ESLint
 ```
 
-## Architecture
+There are no automated tests. Run `npm run build` to verify changes compile before committing.
 
-```
-app/
-  page.tsx                    # Dashboard: header, stats, task list, calendar
-  login/page.tsx              # Google sign-in
-  auth/callback/route.ts      # OAuth code exchange
-  api/
-    tasks/
-      create/route.ts         # Single task: LLM schedule + GCal event
-      batch-create/route.ts   # Batch: one LLM call for N tasks
-      reschedule/route.ts     # Post-sync conflict resolution
-      [id]/complete/route.ts  # Quick-complete (no timer)
-    timer/
-      start|pause|sync|complete/route.ts
-    calendar/
-      oauth|callback|status|sync|events/route.ts
-    blocks/route.ts            # Manual busy blocks
+## Scheduling logic
 
-components/
-  TaskDrawer.tsx              # Slide-up drawer (batch mode default)
-  TaskForm.tsx                # Task creation form (queue or direct)
-  ScheduleView.tsx            # Hourly calendar grid (6 AM – midnight)
-  CornerTimerWidget.tsx       # Floating active timer
-  TimerSelector.tsx           # Task picker modal
-  OnboardingTooltip.tsx       # First-visit tooltip
+Tasks are scheduled by GPT-4o-mini using the existing calendar and task context. If the API key is missing or the LLM returns an invalid result, a deterministic fallback (`lib/scheduleUtils.ts`) is used.
 
-lib/
-  scheduleUtils.ts            # fallbackSchedule() deterministic finder
-  timerService.ts             # localStorage state machine + 30s DB sync
-  googleCalendar.ts           # OAuth client helpers
-  tagColors.ts                # Tag → color mapping
-  notifications.ts            # Browser notification helpers
-```
+**Scheduling window:**
+- Preferred: 7 AM – 11 PM
+- Last resort (packed day / tight deadline): 11 PM – 3 AM
+- Hard blackout: 3 AM – 7 AM (never scheduled)
 
-## Scheduling Logic
+The fallback algorithm walks forward from now+10 minutes, skipping over busy intervals, and falls back to 7 AM the following day only when no slot exists through 3 AM.
 
-1. **LLM pass** (`scheduleBatchWithLLM`): sends all tasks + busy intervals to GPT-4o-mini in one call; validates each returned slot for overlaps
-2. **Per-task fallback** (`fallbackSchedule`): if the LLM slot overlaps anything, the deterministic algorithm finds the next available gap by walking forward through sorted busy intervals
-3. **Newly scheduled tasks** are added to `allBusy` before scheduling the next task, preventing intra-batch overlaps
-4. **Post-sync rescheduling** (`/api/tasks/reschedule`): after every Google Calendar sync, conflicting pending tasks are moved to new free slots
+## Architecture overview
+
+See `CLAUDE.md` for a detailed breakdown of every component, API route, database schema, and key design decisions.
 
 ## Deployment
 
-Add all `.env.local` variables to Vercel project settings, then:
-```bash
-vercel --prod
-```
-Update authorized redirect URIs in GCP and Supabase to use the production domain.
+Deploy to Vercel and add all `.env.local` variables to the Vercel project settings. The PWA service worker is generated automatically on build (`public/sw.js`). Replace `public/icon.svg` with real PNG icons (`public/icon-192.png`, `public/icon-512.png`) before publishing.

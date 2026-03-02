@@ -3,12 +3,15 @@ export interface BusyInterval {
   end: Date;
 }
 
-/** First hour tasks may start (inclusive). */
-const WORK_START_HOUR = 7;  // 7 AM
-/** Last hour tasks may end (exclusive — slots must finish by 11 PM). */
-const WORK_END_HOUR   = 23; // 11 PM
-/** Hard blackout: never start a task between midnight and 7 AM. */
-const BLACKOUT_END    = 7;  // 12 AM – 7 AM
+/** First hour tasks may start (inclusive). Preferred window ends at 11 PM. */
+const WORK_START_HOUR = 7; // 7 AM
+/**
+ * Hard blackout boundary. Nothing is ever scheduled between LATE_NIGHT_MAX_HOUR
+ * (3 AM) and WORK_START_HOUR (7 AM). The midnight – 3 AM range is a valid last
+ * resort when earlier slots are all taken (e.g. a packed day with a tight deadline).
+ * Preferred scheduling window is 7 AM – 11 PM.
+ */
+const LATE_NIGHT_MAX_HOUR = 3; // 3 AM
 
 // ─── Timezone-aware helpers ────────────────────────────────────────────────
 
@@ -55,15 +58,17 @@ export function localTimeOnDay(date: Date, hour: number, minute: number, tz: str
 }
 
 /**
- * Advances `t` into the next valid work-hours window (7 AM – 11 PM) in `tz`.
- * • Before 7 AM  → snaps to 7 AM same local day.
- * • At or after 11 PM → snaps to 7 AM next local day.
+ * Advances `t` into the valid scheduling window in `tz`.
+ * • 3 AM – 7 AM (hard blackout) → snaps to 7 AM on the same local day.
+ * • All other hours (7 AM – midnight, or midnight – 3 AM as a last resort) → kept as-is.
  */
 function snapToWorkHours(t: Date, tz: string): Date {
   const h = localHourIn(t, tz);
-  if (h >= WORK_START_HOUR && h < WORK_END_HOUR) return t;
-  if (h < WORK_START_HOUR) return localTimeOnDay(t, WORK_START_HOUR, 0, tz, 0);
-  return localTimeOnDay(t, WORK_START_HOUR, 0, tz, 1); // past 11 PM → next day
+  // Hard blackout (3 AM – 7 AM): snap to 7 AM same local day.
+  if (h >= LATE_NIGHT_MAX_HOUR && h < WORK_START_HOUR) {
+    return localTimeOnDay(t, WORK_START_HOUR, 0, tz, 0);
+  }
+  return t;
 }
 
 // ─── Public API ────────────────────────────────────────────────────────────
@@ -71,9 +76,14 @@ function snapToWorkHours(t: Date, tz: string): Date {
 /**
  * Deterministic free-slot finder.
  * Finds the earliest gap in `busyIntervals` that fits `estimatedMinutes`,
- * starting no earlier than now+10 min and only within work hours (7 AM – 11 PM local).
- * Never schedules in the 12 AM – 7 AM blackout window.
- * Falls back to the next work-hours window when today is full.
+ * starting no earlier than now+10 min.
+ *
+ * Scheduling priority:
+ *   1. Preferred: 7 AM – 11 PM (college student normal hours)
+ *   2. Last resort: 11 PM – 3 AM (used only when earlier slots are fully booked)
+ *   3. Hard blackout: 3 AM – 7 AM (never scheduled)
+ *
+ * Falls back to the next day's 7 AM when tonight is also fully booked.
  *
  * @param timezone  IANA timezone string (e.g. "America/New_York"). Defaults to
  *                  "America/Los_Angeles" for backwards-compat, but you should
@@ -88,27 +98,32 @@ export function fallbackSchedule(
   const now    = new Date();
   const sorted = [...busyIntervals].sort((a, b) => a.start.getTime() - b.start.getTime());
 
-  // Start within work hours, at least 10 minutes from now
+  // Start within valid hours, at least 10 minutes from now.
   let candidate = snapToWorkHours(new Date(now.getTime() + 10 * 60_000), timezone);
 
   console.log(
     `[fallbackSchedule] TZ=${timezone} | start candidate=${candidate.toISOString()} (local ${localHourIn(candidate, timezone).toFixed(1)}h)`
   );
 
-  // Iteratively push past busy intervals, snapping back to work hours after each push.
+  // Iteratively push past busy intervals, snapping back into valid hours after each push.
   let changed = true;
   let guard   = 0;
   while (changed && guard < 500) {
     guard++;
     changed = false;
 
-    const end     = new Date(candidate.getTime() + estimatedMinutes * 60_000);
-    const endH    = localHourIn(end, timezone);
+    const end      = new Date(candidate.getTime() + estimatedMinutes * 60_000);
+    const endH     = localHourIn(end, timezone);
     const crossDay = localDateStrIn(end, timezone) !== localDateStrIn(candidate, timezone);
 
-    // Slot end is past 11 PM local or wraps into the next local day → next day 7 AM
-    if (endH > WORK_END_HOUR || crossDay) {
-      candidate = localTimeOnDay(candidate, WORK_START_HOUR, 0, timezone, 1);
+    // If the slot end lands in the hard blackout (3 AM – 7 AM), push to 7 AM on
+    // the end's local day. If it crosses into next-day daytime (7 AM+), do the same.
+    // A slot ending between midnight and 3 AM is acceptable as a last resort and is
+    // left alone to fall through to the overlap check.
+    const endInBlackout     = endH >= LATE_NIGHT_MAX_HOUR && endH < WORK_START_HOUR;
+    const endCrossesIntoDay = crossDay && endH >= WORK_START_HOUR;
+    if (endInBlackout || endCrossesIntoDay) {
+      candidate = localTimeOnDay(end, WORK_START_HOUR, 0, timezone, 0);
       changed   = true;
       continue;
     }
@@ -133,12 +148,15 @@ export function fallbackSchedule(
       return { scheduled_start: candidate.toISOString(), scheduled_end: end.toISOString() };
     }
 
-    // Last resort: place task right before deadline — never in the 12 AM–7 AM blackout.
-    const startBeforeDl = new Date(dl.getTime() - estimatedMinutes * 60_000);
-    const startH        = localHourIn(startBeforeDl, timezone);
-    const inBlackout    = startH < BLACKOUT_END;
-    const hasConflict   = sorted.some((iv) => iv.start < dl && iv.end > startBeforeDl);
-    if (startBeforeDl > now && !inBlackout && !hasConflict) {
+    // Last resort: place task right before deadline.
+    // Reject only if start or end lands in the hard blackout (3 AM – 7 AM).
+    const startBeforeDl   = new Date(dl.getTime() - estimatedMinutes * 60_000);
+    const startH          = localHourIn(startBeforeDl, timezone);
+    const dlH             = localHourIn(dl, timezone);
+    const startInBlackout = startH >= LATE_NIGHT_MAX_HOUR && startH < WORK_START_HOUR;
+    const endInBlackout   = dlH   >= LATE_NIGHT_MAX_HOUR && dlH   < WORK_START_HOUR;
+    const hasConflict     = sorted.some((iv) => iv.start < dl && iv.end > startBeforeDl);
+    if (startBeforeDl > now && !startInBlackout && !endInBlackout && !hasConflict) {
       console.log(`[fallbackSchedule] ✅ (pre-deadline) ${startBeforeDl.toISOString()} (local ${startH.toFixed(1)}h)`);
       return {
         scheduled_start: startBeforeDl.toISOString(),

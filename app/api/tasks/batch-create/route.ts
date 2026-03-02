@@ -20,6 +20,15 @@ interface ScheduledTask extends TaskInput {
   scheduled_end: string;
 }
 
+/** Lower score = more urgent = scheduled first. */
+function urgencyScore(task: TaskInput): number {
+  const hoursUntilDeadline = task.deadline
+    ? (new Date(task.deadline).getTime() - Date.now()) / 3_600_000
+    : Infinity;
+  const priorityWeight = task.priority === 'high' ? 0.5 : task.priority === 'low' ? 1.5 : 1;
+  return hoursUntilDeadline * priorityWeight;
+}
+
 /** Schedule all tasks together in one LLM call (fewer API calls than N individual calls). */
 async function scheduleBatchWithLLM(
   tasks: TaskInput[],
@@ -60,7 +69,7 @@ EXISTING BUSY INTERVALS (tasks + calendar events):
 ${JSON.stringify(busyForPrompt)}
 
 RULES:
-1. Schedule ONLY between 7am and 11pm in the user's local timezone (${timezone}). Never use the 12am–7am window under any circumstances. If today is too full, schedule for tomorrow morning.
+1. Preferred window: 7 AM – 11 PM in the user's local timezone (${timezone}). If the day is fully packed and a deadline requires it, extending into the 11 PM – 3 AM window is acceptable as a last resort. Never schedule between 3 AM and 7 AM under any circumstances.
 2. Each task's end time MUST be before or at its deadline
 3. Tasks due sooner should generally be scheduled sooner
 4. No overlaps between tasks being scheduled, or with existing busy intervals
@@ -126,14 +135,18 @@ Respond ONLY with a JSON array (no extra text):
         continue;
       }
 
-      let scheduledEnd = new Date(scheduledStart.getTime() + task.estimatedMinutes * 60_000);
+      const scheduledEnd = new Date(scheduledStart.getTime() + task.estimatedMinutes * 60_000);
 
-      // Validate: LLM result must be within work hours (7 AM – 11 PM in user's timezone)
-      const startH   = localHourIn(scheduledStart, timezone);
-      const endH     = localHourIn(scheduledEnd,   timezone);
-      const crossDay = new Intl.DateTimeFormat('sv', { timeZone: timezone }).format(scheduledEnd) !==
-                       new Intl.DateTimeFormat('sv', { timeZone: timezone }).format(scheduledStart);
-      if (startH < 7 || endH > 23 || crossDay) {
+      // Validate: reject times in the hard blackout (3 AM – 7 AM).
+      // The midnight – 3 AM window is acceptable as a last resort so we allow it.
+      const startH        = localHourIn(scheduledStart, timezone);
+      const endH          = localHourIn(scheduledEnd, timezone);
+      const crossDay      = new Intl.DateTimeFormat('sv', { timeZone: timezone }).format(scheduledEnd) !==
+                            new Intl.DateTimeFormat('sv', { timeZone: timezone }).format(scheduledStart);
+      const startBlackout = startH >= 3 && startH < 7;
+      const endBlackout   = endH   >= 3 && endH   < 7;
+      const endCrossesDay = crossDay && endH >= 7;
+      if (startBlackout || endBlackout || endCrossesDay) {
         console.warn(`[scheduleBatchWithLLM] LLM returned out-of-hours time ${scheduledStart.toISOString()} for task ${i} ("${task.title}") — falling back`);
         const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline, timezone);
         allBusy.push({ start: new Date(fb.scheduled_start), end: new Date(fb.scheduled_end) });
@@ -147,13 +160,22 @@ Respond ONLY with a JSON array (no extra text):
         if (scheduledEnd > dl) {
           const adjustedStart = new Date(dl.getTime() - task.estimatedMinutes * 60_000);
           const finalStart = adjustedStart > now ? adjustedStart : now;
-          scheduledEnd = new Date(finalStart.getTime() + task.estimatedMinutes * 60_000);
-          results.push({
-            ...task,
-            scheduled_start: finalStart.toISOString(),
-            scheduled_end: scheduledEnd.toISOString(),
-          });
-          allBusy.push({ start: finalStart, end: scheduledEnd });
+          const finalEnd = new Date(finalStart.getTime() + task.estimatedMinutes * 60_000);
+          // Overlap check is still required even after deadline clamping
+          const hasOverlapAfterClamp = allBusy.some((iv) => iv.start < finalEnd && iv.end > finalStart);
+          if (hasOverlapAfterClamp) {
+            console.warn(`[scheduleBatchWithLLM] Clamped slot overlaps for task ${i} ("${task.title}") — falling back`);
+            const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline, timezone);
+            allBusy.push({ start: new Date(fb.scheduled_start), end: new Date(fb.scheduled_end) });
+            results.push({ ...task, ...fb });
+          } else {
+            results.push({
+              ...task,
+              scheduled_start: finalStart.toISOString(),
+              scheduled_end:   finalEnd.toISOString(),
+            });
+            allBusy.push({ start: finalStart, end: finalEnd });
+          }
           continue;
         }
       }
@@ -263,8 +285,11 @@ export async function POST(req: NextRequest) {
     })),
   ];
 
+  // Sort by urgency so the most time-sensitive tasks claim slots first
+  const sortedTasks = [...tasksWithDurations].sort((a, b) => urgencyScore(a) - urgencyScore(b));
+
   // Schedule all tasks together (one LLM call)
-  const scheduled = await scheduleBatchWithLLM(tasksWithDurations, existingBusy, timezone);
+  const scheduled = await scheduleBatchWithLLM(sortedTasks, existingBusy, timezone);
 
   // Bulk insert all tasks
   const rows = scheduled.map((t) => ({

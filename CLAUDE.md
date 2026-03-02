@@ -57,11 +57,16 @@ Floating overlays:
 
 New tasks are scheduled via `scheduleWithLLM()`:
 1. Fetches existing tasks + Google Calendar events for today + tomorrow as context
-2. Calls GPT-4o-mini with a structured prompt (rules: 7am–midnight, no overlaps, respect deadlines, start ≥10 min from now)
+2. Calls GPT-4o-mini with a structured prompt (preferred 7am–11pm, last resort up to 3am, hard blackout 3am–7am, no overlaps, respect deadlines, start ≥10 min from now)
 3. **Validates** the LLM result against `busyIntervals` — if the result overlaps anything, it falls back automatically
 4. Falls back to `fallbackSchedule()` (deterministic free-slot finder) if: API key missing, LLM errors, or overlap detected
 
-`fallbackSchedule()` in `lib/scheduleUtils.ts`: sorts busy intervals, walks forward from now+10min to find the first gap, falls back to 8am tomorrow if no slot before 11pm (extended window for students working late).
+`fallbackSchedule()` in `lib/scheduleUtils.ts`: sorts busy intervals, walks forward from now+10min to find the first free gap. Scheduling window priority:
+1. **Preferred**: 7 AM – 11 PM
+2. **Last resort**: 11 PM – 3 AM (used only when earlier slots are fully booked, e.g. a packed day with an imminent deadline)
+3. **Hard blackout**: 3 AM – 7 AM (never scheduled)
+
+Falls back to 7 AM the next day only when all slots through 3 AM are also unavailable.
 
 ### Batch Scheduling (`app/api/tasks/batch-create/route.ts`, `components/TaskDrawer.tsx`)
 

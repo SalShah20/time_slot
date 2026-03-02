@@ -83,7 +83,7 @@ CALENDAR EVENTS (today & tomorrow):
 ${JSON.stringify(calEvents ?? [])}
 
 RULES:
-1. Schedule ONLY between 7 AM and 11 PM in the user's local timezone (${timezone}). Never use the 12 AM–7 AM window under any circumstances. If today is too full, schedule for tomorrow morning.
+1. Preferred window: 7 AM – 11 PM in the user's local timezone (${timezone}). If the day is fully packed and a deadline requires it, extending into the 11 PM – 3 AM window is acceptable as a last resort. Never schedule between 3 AM and 7 AM under any circumstances.
 2. Task end time MUST be before or at deadline
 3. If deadline is today, schedule ASAP — do not push to tomorrow
 4. Avoid overlapping existing tasks and calendar events
@@ -124,12 +124,17 @@ Respond ONLY with this JSON (no extra text):
 
     let scheduledEnd = new Date(scheduledStart.getTime() + task.estimatedMinutes * 60_000);
 
-    // Validate: LLM result must be within work hours (7 AM – 11 PM in user's timezone)
-    const startH    = localHourIn(scheduledStart, timezone);
-    const endH      = localHourIn(scheduledEnd,   timezone);
-    const crossDay  = new Intl.DateTimeFormat('sv', { timeZone: timezone }).format(scheduledEnd) !==
-                      new Intl.DateTimeFormat('sv', { timeZone: timezone }).format(scheduledStart);
-    if (startH < 7 || endH > 23 || crossDay) {
+    // Validate: reject times in the hard blackout (3 AM – 7 AM).
+    // The midnight – 3 AM window is acceptable as a last resort so we allow it.
+    const startH        = localHourIn(scheduledStart, timezone);
+    const endH          = localHourIn(scheduledEnd, timezone);
+    const crossDay      = new Intl.DateTimeFormat('sv', { timeZone: timezone }).format(scheduledEnd) !==
+                          new Intl.DateTimeFormat('sv', { timeZone: timezone }).format(scheduledStart);
+    const startBlackout = startH >= 3 && startH < 7;
+    const endBlackout   = endH   >= 3 && endH   < 7;
+    // End crosses into next-day daytime (7 AM+) — too far out.
+    const endCrossesDay = crossDay && endH >= 7;
+    if (startBlackout || endBlackout || endCrossesDay) {
       console.warn(`[scheduleWithLLM] LLM returned out-of-hours time ${scheduledStart.toISOString()} for "${task.title}" — falling back`);
       return fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone);
     }
