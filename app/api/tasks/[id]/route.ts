@@ -24,15 +24,20 @@ export async function PATCH(
 
   const supabase = createSupabaseServer();
 
-  // Fetch current task to verify ownership and get existing values
+  // Fetch current task to verify ownership and get existing values.
+  // Use select('*') so this never fails due to a missing column (e.g. google_event_id
+  // before migration 007 is run). If we used an explicit column list and any column
+  // didn't exist yet, Supabase would return a schema-cache error that we'd incorrectly
+  // surface as "Task not found".
   const { data: existing, error: fetchError } = await supabase
     .from('tasks')
-    .select('id, title, description, tag, scheduled_start, scheduled_end, estimated_minutes, deadline, priority, google_event_id, status')
+    .select('*')
     .eq('id', taskId)
     .eq('user_id', user.id)
     .single();
 
   if (fetchError || !existing) {
+    console.error('[PATCH /api/tasks/[id]] fetch error:', fetchError);
     return NextResponse.json({ error: 'Task not found' }, { status: 404 });
   }
 
@@ -112,12 +117,13 @@ export async function DELETE(
 
   const { data: task, error: fetchError } = await supabase
     .from('tasks')
-    .select('id, google_event_id')
+    .select('*')
     .eq('id', taskId)
     .eq('user_id', user.id)
     .single();
 
   if (fetchError || !task) {
+    console.error('[DELETE /api/tasks/[id]] fetch error:', fetchError);
     return NextResponse.json({ error: 'Task not found' }, { status: 404 });
   }
 
