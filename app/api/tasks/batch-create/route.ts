@@ -5,6 +5,7 @@ import { getTagColor } from '@/lib/tagColors';
 import { fallbackSchedule, localHourIn } from '@/lib/scheduleUtils';
 import type { BusyInterval } from '@/lib/scheduleUtils';
 import { estimateDurationWithLLM } from '@/lib/estimateDuration';
+import { fetchUserTimingHistory } from '@/lib/timingHistory';
 
 interface TaskInput {
   title: string;
@@ -240,11 +241,14 @@ export async function POST(req: NextRequest) {
   const supabase = createSupabaseServer();
 
   try {
+  // Fetch timing history once — shared across all duration estimates in this batch
+  const history = await fetchUserTimingHistory(supabase, user.id);
+
   // Fill in missing durations via LLM (parallel to keep batch fast)
   const tasksWithDurations = await Promise.all(
     tasks.map(async (t) => {
       if (t.estimatedMinutes) return t;
-      const estimated = await estimateDurationWithLLM(t.title, t.description, t.tag, t.priority);
+      const estimated = await estimateDurationWithLLM(t.title, t.description, t.tag, t.priority, history);
       return { ...t, estimatedMinutes: estimated };
     }),
   );

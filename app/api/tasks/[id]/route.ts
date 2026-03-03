@@ -50,7 +50,6 @@ export async function PATCH(
   if (body.estimatedMinutes !== undefined) update.estimated_minutes = body.estimatedMinutes;
 
   const newMinutes = body.estimatedMinutes ?? (existing.estimated_minutes as number);
-  const timeChanged = body.scheduledStart !== undefined || body.estimatedMinutes !== undefined;
 
   if (body.scheduledStart !== undefined) {
     update.scheduled_start = body.scheduledStart;
@@ -62,18 +61,18 @@ export async function PATCH(
     ).toISOString();
   }
 
-  // Update GCal event if time or duration changed
-  if (timeChanged && existing.google_event_id) {
+  // Sync GCal event whenever one exists — patch in-place so the event ID stays stable
+  if (existing.google_event_id) {
     const calendar = await getCalendarClient(supabase, user.id);
     if (calendar) {
-      await deleteCalendarEvent(calendar, existing.google_event_id as string);
       try {
         const finalStart = (update.scheduled_start as string | undefined) ?? (existing.scheduled_start as string);
         const finalEnd   = (update.scheduled_end   as string | undefined) ?? (existing.scheduled_end   as string);
         const tagValue   = (update.tag as string | undefined) ?? (existing.tag as string | null) ?? undefined;
         const tagColor   = getTagColor(tagValue);
-        const gcalEvent  = await calendar.events.insert({
+        await calendar.events.patch({
           calendarId: 'primary',
+          eventId:    existing.google_event_id as string,
           requestBody: {
             summary:     (update.title       as string | undefined) ?? (existing.title       as string),
             description: (update.description as string | undefined) ?? (existing.description as string | null) ?? '',
@@ -82,9 +81,8 @@ export async function PATCH(
             colorId:     tagColor.gcalColorId,
           },
         });
-        if (gcalEvent.data.id) update.google_event_id = gcalEvent.data.id;
       } catch (err) {
-        console.warn('[PATCH /api/tasks/[id]] GCal event recreation failed:', err);
+        console.warn('[PATCH /api/tasks/[id]] GCal event update failed:', err);
       }
     }
   }

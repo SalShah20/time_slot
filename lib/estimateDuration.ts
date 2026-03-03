@@ -1,13 +1,19 @@
+import type { UserTimingHistory } from './timingHistory';
+
 /**
  * LLM-powered duration estimator.
  * Called when a task is submitted without a manual duration.
  * Falls back to tag-based defaults if the API key is missing or the call fails.
+ *
+ * Pass `history` (from `fetchUserTimingHistory`) to let the LLM calibrate its
+ * estimate against the user's own past timing data.
  */
 export async function estimateDurationWithLLM(
   title: string,
   description?: string | null,
   tag?: string | null,
   priority?: string | null,
+  history?: UserTimingHistory,
 ): Promise<number> {
   const apiKey = process.env.OPENAI_API_KEY;
 
@@ -15,11 +21,38 @@ export async function estimateDurationWithLLM(
     return tagDefault(tag);
   }
 
+  // Build the history section only when there is something useful to say
+  let historySection = '';
+  if (history) {
+    const lines: string[] = [];
+
+    const tags = Object.entries(history.tagStats);
+    if (tags.length > 0) {
+      lines.push("User's actual tag averages (from their own completed tasks):");
+      for (const [t, { avgMinutes, count }] of tags) {
+        lines.push(`  ${t}: ${avgMinutes} min avg (${count} task${count !== 1 ? 's' : ''})`);
+      }
+    }
+
+    if (history.recentTasks.length > 0) {
+      lines.push("User's recent task history (title → actual minutes taken):");
+      for (const t of history.recentTasks) {
+        const diff = t.actualMinutes - t.estimatedMinutes;
+        const diffStr = diff > 0 ? `+${diff}` : String(diff);
+        lines.push(`  "${t.title}"${t.tag ? ` [${t.tag}]` : ''}: ${t.actualMinutes} min (est was ${t.estimatedMinutes}, ${diffStr})`);
+      }
+    }
+
+    if (lines.length > 0) {
+      historySection = '\n\n' + lines.join('\n');
+    }
+  }
+
   const prompt = `Estimate how long this task will take a college student, in minutes. Return ONLY a whole number (no units, no explanation).
 
-Task: ${title}${description ? `\nDescription: ${description}` : ''}${tag ? `\nTag: ${tag}` : ''}${priority ? `\nPriority: ${priority}` : ''}
+Task: ${title}${description ? `\nDescription: ${description}` : ''}${tag ? `\nTag: ${tag}` : ''}${priority ? `\nPriority: ${priority}` : ''}${historySection}
 
-Guidelines:
+Guidelines (use history above to override these when relevant):
 - Study/homework: 60–180 min
 - Work tasks: 60–240 min
 - Personal errands: 30–90 min
@@ -49,7 +82,7 @@ Guidelines:
     const minutes = parseInt(raw, 10);
 
     if (!isNaN(minutes) && minutes > 0 && minutes <= 480) {
-      console.log(`[estimateDuration] "${title}" → ${minutes} min (LLM)`);
+      console.log(`[estimateDuration] "${title}" → ${minutes} min (LLM${historySection ? '+history' : ''})`);
       return minutes;
     }
 

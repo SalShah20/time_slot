@@ -6,6 +6,7 @@ import { fallbackSchedule, localHourIn } from '@/lib/scheduleUtils';
 import type { BusyInterval } from '@/lib/scheduleUtils';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { estimateDurationWithLLM } from '@/lib/estimateDuration';
+import { fetchUserTimingHistory } from '@/lib/timingHistory';
 
 /** LLM-powered smart scheduler using GPT-4o-mini. Falls back to simple scheduling on any error. */
 async function scheduleWithLLM(
@@ -206,8 +207,11 @@ export async function POST(req: NextRequest) {
 
   const supabase = createSupabaseServer();
 
-  // If no duration supplied, ask the LLM to estimate it
-  const finalEstimatedMinutes = estimatedMinutes || await estimateDurationWithLLM(title, description, tag, priority);
+  // If no duration supplied, ask the LLM to estimate it (using the user's own history to calibrate)
+  const finalEstimatedMinutes = estimatedMinutes || await estimateDurationWithLLM(
+    title, description, tag, priority,
+    await fetchUserTimingHistory(supabase, user.id),
+  );
 
   const { scheduled_start: scheduledStart, scheduled_end: scheduledEnd } = await scheduleWithLLM(
     supabase,
