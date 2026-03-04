@@ -26,7 +26,10 @@ export default function Home() {
   const router = useRouter();
   const [user, setUser]                           = useState<User | null>(null);
   const [tasks, setTasks]                         = useState<TaskRow[]>([]);
-  const [blocks, setBlocks]                       = useState<CalendarBlock[]>([]);
+  // Per-date cache: Record<YYYY-MM-DD, CalendarBlock[]>.
+  // Keyed by local date string so navigating back to a previously-viewed date
+  // shows cached data instantly while the refresh is in flight (no blank flash).
+  const [blocksCache, setBlocksCache]             = useState<Record<string, CalendarBlock[]>>({});
   const [loading, setLoading]                     = useState(true);
   const [completionStats, setCompletionStats]     = useState<CompletionStats | null>(null);
   const [showTimerSelector, setShowTimerSelector] = useState(false);
@@ -40,6 +43,11 @@ export default function Home() {
   const [showUserMenu, setShowUserMenu]           = useState(false);
   const [selectedDate, setSelectedDate]           = useState(new Date());
   const [mobileView, setMobileView]               = useState<'tasks' | 'schedule'>('tasks');
+
+  // Derive the YYYY-MM-DD key and current blocks from the cache.
+  // Using local date components (not UTC) so it aligns with how fetchBlocks queries the server.
+  const blocksDateKey = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')}`;
+  const blocks = blocksCache[blocksDateKey] ?? [];
 
   const userMenuRef         = useRef<HTMLDivElement>(null);
   const hasSyncedRef        = useRef(false);
@@ -115,7 +123,10 @@ export default function Home() {
         `/api/blocks?date=${dateStr}&timezone=${encodeURIComponent(timezone)}`,
         { signal: controller.signal },
       );
-      if (res.ok) setBlocks(await res.json());
+      if (res.ok) {
+        const data = await res.json() as CalendarBlock[];
+        setBlocksCache((prev) => ({ ...prev, [dateStr]: data }));
+      }
     } catch (err) {
       if ((err as Error).name === 'AbortError') return; // expected — a newer call took over
       console.error('[fetchBlocks]', err);
@@ -280,9 +291,14 @@ export default function Home() {
     });
     if (!res.ok) throw new Error('Failed to add block');
     const newBlock: CalendarBlock & { gcal_warning?: boolean } = await res.json();
-    setBlocks((prev) => [...prev, newBlock].sort(
-      (a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
-    ));
+    const d = new Date(newBlock.start_time);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    setBlocksCache((prev) => ({
+      ...prev,
+      [key]: [...(prev[key] ?? []), newBlock].sort(
+        (a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+      ),
+    }));
     if (newBlock.gcal_warning) {
       showToast('Block saved locally — Google Calendar sync failed.');
     }
@@ -290,7 +306,15 @@ export default function Home() {
 
   const handleDeleteBlock = useCallback(async (id: string) => {
     const res = await fetch(`/api/blocks/${id}`, { method: 'DELETE' });
-    if (res.ok) setBlocks((prev) => prev.filter((b) => b.id !== id));
+    if (res.ok) {
+      setBlocksCache((prev) => {
+        const next = { ...prev };
+        for (const key of Object.keys(next)) {
+          next[key] = next[key].filter((b) => b.id !== id);
+        }
+        return next;
+      });
+    }
   }, []);
 
   const handleQuickComplete = useCallback(async (taskId: string) => {

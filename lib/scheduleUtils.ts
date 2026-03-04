@@ -4,12 +4,12 @@ export interface BusyInterval {
 }
 
 /** First hour tasks may start (inclusive). Preferred window ends at 11 PM. */
-const WORK_START_HOUR = 7; // 7 AM
+const WORK_START_HOUR = 8; // 8 AM
 /**
  * Hard blackout boundary. Nothing is ever scheduled between LATE_NIGHT_MAX_HOUR
- * (3 AM) and WORK_START_HOUR (7 AM). The midnight – 3 AM range is a valid last
+ * (3 AM) and WORK_START_HOUR (8 AM). The midnight – 3 AM range is a valid last
  * resort when earlier slots are all taken (e.g. a packed day with a tight deadline).
- * Preferred scheduling window is 7 AM – 11 PM.
+ * Preferred scheduling window is 8 AM – 11 PM.
  */
 const LATE_NIGHT_MAX_HOUR = 3; // 3 AM
 
@@ -64,7 +64,7 @@ export function localTimeOnDay(date: Date, hour: number, minute: number, tz: str
 
 /**
  * Advances `t` into the valid scheduling window in `tz`.
- * • 3 AM – 7 AM (hard blackout) → snaps to 7 AM on the same local day.
+ * • 3 AM – 8 AM (hard blackout) → snaps to 8 AM on the same local day.
  * • All other hours (7 AM – midnight, or midnight – 3 AM as a last resort) → kept as-is.
  */
 function snapToWorkHours(t: Date, tz: string): Date {
@@ -84,9 +84,9 @@ function snapToWorkHours(t: Date, tz: string): Date {
  * starting no earlier than now+10 min.
  *
  * Scheduling priority:
- *   1. Preferred: 7 AM – 11 PM (college student normal hours)
+ *   1. Preferred: 8 AM – 11 PM (college student normal hours)
  *   2. Last resort: 11 PM – 3 AM (used only when earlier slots are fully booked)
- *   3. Hard blackout: 3 AM – 7 AM (never scheduled)
+ *   3. Hard blackout: 3 AM – 8 AM (never scheduled)
  *
  * Falls back to the next day's 7 AM when tonight is also fully booked.
  *

@@ -25,7 +25,11 @@ export async function GET(req: NextRequest) {
 
   console.log('[GET /api/blocks] Query range:', { startOfDay, endOfDay, userId: user.id });
 
-  const [{ data: manual, error: manualError }, { data: google, error: googleError }] = await Promise.all([
+  const [
+    { data: manual, error: manualError },
+    { data: google, error: googleError },
+    { data: taskEventIds },
+  ] = await Promise.all([
     supabase
       .from('calendar_blocks')
       .select('id, title, start_time, end_time, is_busy')
@@ -34,10 +38,17 @@ export async function GET(req: NextRequest) {
       .lt('start_time', endOfDay),
     supabase
       .from('calendar_events')
-      .select('id, title, start_time, end_time, is_busy')
+      .select('id, google_event_id, title, start_time, end_time, is_busy')
       .eq('user_id', user.id)
       .gte('start_time', startOfDay)
       .lt('start_time', endOfDay),
+    // Fetch the GCal event IDs owned by TimeSlot tasks so we can exclude them
+    // from the blocks list — they're already rendered as task blocks in ScheduleView.
+    supabase
+      .from('tasks')
+      .select('google_event_id')
+      .eq('user_id', user.id)
+      .not('google_event_id', 'is', null),
   ]);
 
   console.log('[GET /api/blocks] Results — manual blocks:', manual?.length ?? 0, 'google events:', google?.length ?? 0,
@@ -45,11 +56,19 @@ export async function GET(req: NextRequest) {
   if (manualError) console.error('[GET /api/blocks] calendar_blocks error:', manualError);
   if (googleError) console.error('[GET /api/blocks] calendar_events error:', googleError);
 
-  // Deduplicate: if a Google Calendar event has the same start time as a manual block,
-  // it was likely mirrored from TimeSlot — exclude it to prevent double-rendering.
+  // Build a set of GCal event IDs that belong to TimeSlot tasks.
+  // These events are already rendered as task blocks in ScheduleView, so we must
+  // exclude them from the blocks list to prevent double-rendering.
+  const taskOwnedGcalIds = new Set(
+    (taskEventIds ?? []).map((t) => t.google_event_id as string).filter(Boolean)
+  );
+
+  // Also deduplicate by start time against manual blocks (legacy safety net).
   const manualStartMs = new Set((manual ?? []).map((b) => new Date(b.start_time).getTime()));
   const deduplicatedGoogle = (google ?? []).filter(
-    (e) => !manualStartMs.has(new Date(e.start_time).getTime())
+    (e) =>
+      !taskOwnedGcalIds.has(e.google_event_id) &&
+      !manualStartMs.has(new Date(e.start_time).getTime())
   );
 
   const blocks = [
