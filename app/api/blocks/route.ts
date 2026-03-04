@@ -14,10 +14,19 @@ export async function GET(req: NextRequest) {
   const dateParam = req.nextUrl.searchParams.get('date');
   const timezone = req.nextUrl.searchParams.get('timezone') ?? 'UTC';
 
-  // Keep parsing timezone-safe by anchoring the input day at UTC midnight, then
-  // converting that day into local midnight in the user's timezone.
+  // Anchor the input day at NOON UTC (not midnight UTC) so that
+  // localTimeOnDay → localDateStrIn sees the right local calendar date for any
+  // timezone from UTC-12 to UTC+13.
+  //
+  // Why midnight fails: new Date("2026-03-03T00:00:00Z") is 7 PM March 2 in
+  // UTC-5, so localDateStrIn returns "2026-03-02" and the query hits the wrong
+  // day — exactly the mismatch that made /api/calendar/sync (which uses `now`)
+  // and /api/blocks (which used UTC midnight) disagree.
+  //
+  // Noon UTC is 7 AM in UTC-5 and 11 PM (same day) in UTC+11 — safely on the
+  // right local date for all practical timezones.
   const base = (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam))
-    ? new Date(`${dateParam}T00:00:00.000Z`)
+    ? new Date(`${dateParam}T12:00:00.000Z`)
     : new Date();
 
   const startOfDay = localTimeOnDay(base, 0, 0, timezone, 0).toISOString();

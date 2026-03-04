@@ -91,7 +91,7 @@ export default function LoginPage() {
       <div className="bg-white rounded-2xl shadow-sm border border-surface-200 p-8 flex flex-col gap-5 w-full max-w-sm">
         <Logo />
         <p className="text-surface-500 text-sm text-center -mt-1">
-          Schedule your tasks. Focus on what matters.
+          Stop forgetting. Start doing.
         </p>
 
         {showForgot ? (
