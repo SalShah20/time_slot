@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
-import { getCalendarClient } from '@/lib/googleCalendar';
+import { getCalendarClient, fetchCalendarEventsForDay } from '@/lib/googleCalendar';
 import { getTagColor } from '@/lib/tagColors';
-import { fallbackSchedule, localHourIn } from '@/lib/scheduleUtils';
+import { fallbackSchedule, localHourIn, localDateStrIn } from '@/lib/scheduleUtils';
 import type { BusyInterval } from '@/lib/scheduleUtils';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { estimateDurationWithLLM } from '@/lib/estimateDuration';
@@ -21,7 +21,7 @@ async function scheduleWithLLM(
     priority?: string;
   },
   timezone: string,
-): Promise<{ scheduled_start: string; scheduled_end: string }> {
+): Promise<{ scheduled_start: string; scheduled_end: string; busyIntervals: BusyInterval[] }> {
   const now        = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
   const twoDaysOut = new Date(todayStart);
@@ -63,7 +63,7 @@ async function scheduleWithLLM(
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     console.warn('[scheduleWithLLM] OPENAI_API_KEY not set — using fallback');
-    return fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone);
+    return { ...fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone), busyIntervals };
   }
 
   const localTime = new Intl.DateTimeFormat('en-US', {
@@ -140,7 +140,7 @@ Respond ONLY with this JSON (no extra text):
     const endCrossesDay = crossDay && endH >= 8;
     if (startBlackout || endBlackout || endCrossesDay) {
       console.warn(`[scheduleWithLLM] LLM returned out-of-hours time ${scheduledStart.toISOString()} for "${task.title}" — falling back`);
-      return fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone);
+      return { ...fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone), busyIntervals };
     }
 
     // Safety: never schedule end past deadline
@@ -154,6 +154,7 @@ Respond ONLY with this JSON (no extra text):
         return {
           scheduled_start: finalStart.toISOString(),
           scheduled_end:   scheduledEnd.toISOString(),
+          busyIntervals,
         };
       }
     }
@@ -166,16 +167,17 @@ Respond ONLY with this JSON (no extra text):
       console.warn(
         '[scheduleWithLLM] LLM result overlaps existing schedule for "' + task.title + '" — falling back to deterministic scheduler',
       );
-      return fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone);
+      return { ...fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone), busyIntervals };
     }
 
     return {
       scheduled_start: scheduledStart.toISOString(),
       scheduled_end:   scheduledEnd.toISOString(),
+      busyIntervals,
     };
   } catch (err) {
     console.error('[scheduleWithLLM] Error, falling back to simple scheduler:', err);
-    return fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone);
+    return { ...fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone), busyIntervals };
   }
 }
 
@@ -216,12 +218,46 @@ export async function POST(req: NextRequest) {
     await fetchUserTimingHistory(supabase, user.id),
   );
 
-  const { scheduled_start: scheduledStart, scheduled_end: scheduledEnd } = await scheduleWithLLM(
+  const {
+    scheduled_start: scheduledStart,
+    scheduled_end: scheduledEnd,
+    busyIntervals: initialBusy,
+  } = await scheduleWithLLM(
     supabase,
     user.id,
     { title, description, estimatedMinutes: finalEstimatedMinutes, tag, deadline, priority },
     timezone,
   );
+
+  // If the task landed beyond tomorrow, fetch live GCal events for that day and
+  // re-schedule if the slot conflicts with an event not yet in our DB cache.
+  let finalScheduledStart = scheduledStart;
+  let finalScheduledEnd   = scheduledEnd;
+  try {
+    const scheduledDay = localDateStrIn(new Date(scheduledStart), timezone);
+    const tomorrowDate = new Date();
+    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+    const tomorrowDay  = localDateStrIn(tomorrowDate, timezone);
+
+    if (scheduledDay > tomorrowDay) {
+      const calCheck = await getCalendarClient(supabase, user.id);
+      if (calCheck) {
+        const liveEvents = await fetchCalendarEventsForDay(calCheck, new Date(scheduledStart), timezone);
+        const sStart = new Date(scheduledStart);
+        const sEnd   = new Date(scheduledEnd);
+        const hasOverlap = liveEvents.some((e) => e.start < sEnd && e.end > sStart);
+        if (hasOverlap) {
+          console.warn(`[/api/tasks/create] Slot on ${scheduledDay} conflicts with a live GCal event — rescheduling`);
+          const augmented = [...initialBusy, ...liveEvents];
+          const fb = fallbackSchedule(augmented, finalEstimatedMinutes, deadline, timezone);
+          finalScheduledStart = fb.scheduled_start;
+          finalScheduledEnd   = fb.scheduled_end;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[/api/tasks/create] Future-day GCal check failed (non-fatal):', err);
+  }
 
   const baseInsert = {
     user_id:           user.id,
@@ -231,13 +267,13 @@ export async function POST(req: NextRequest) {
     estimated_minutes: finalEstimatedMinutes,
     priority:          priority ?? null,
     deadline:          deadline ?? null,
-    scheduled_start:   scheduledStart,
+    scheduled_start:   finalScheduledStart,
     status:            'pending',
   };
 
   let { data, error } = await supabase
     .from('tasks')
-    .insert({ ...baseInsert, scheduled_end: scheduledEnd })
+    .insert({ ...baseInsert, scheduled_end: finalScheduledEnd })
     .select('*')
     .single();
 
@@ -251,7 +287,7 @@ export async function POST(req: NextRequest) {
       .select('id, user_id, title, estimated_minutes, deadline, scheduled_start, status, created_at, updated_at')
       .single());
     if (data) {
-      (data as Record<string, unknown>).scheduled_end = scheduledEnd;
+      (data as Record<string, unknown>).scheduled_end = finalScheduledEnd;
       (data as Record<string, unknown>).description   = description ?? null;
       (data as Record<string, unknown>).tag           = tag ?? null;
       (data as Record<string, unknown>).priority      = priority ?? null;
@@ -273,8 +309,8 @@ export async function POST(req: NextRequest) {
         requestBody: {
           summary:     title,
           description: description ?? '',
-          start:       { dateTime: scheduledStart },
-          end:         { dateTime: scheduledEnd },
+          start:       { dateTime: finalScheduledStart },
+          end:         { dateTime: finalScheduledEnd },
           colorId:     tagColor.gcalColorId,
         },
       });

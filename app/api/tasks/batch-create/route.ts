@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
-import { getCalendarClient } from '@/lib/googleCalendar';
+import { getCalendarClient, fetchCalendarEventsForDay } from '@/lib/googleCalendar';
 import { getTagColor } from '@/lib/tagColors';
-import { fallbackSchedule, localHourIn } from '@/lib/scheduleUtils';
+import { fallbackSchedule, localHourIn, localDateStrIn } from '@/lib/scheduleUtils';
 import type { BusyInterval } from '@/lib/scheduleUtils';
 import { estimateDurationWithLLM } from '@/lib/estimateDuration';
 import { fetchUserTimingHistory } from '@/lib/timingHistory';
@@ -294,6 +294,73 @@ export async function POST(req: NextRequest) {
 
   // Schedule all tasks together (one LLM call)
   const scheduled = await scheduleBatchWithLLM(sortedTasks, existingBusy, timezone);
+
+  // Post-scheduling: for any task landing beyond tomorrow, fetch live GCal events
+  // for that day and re-schedule if the slot conflicts (DB only caches today+tomorrow).
+  // Must run before the DB insert so the corrected times are persisted.
+  try {
+    const tomorrowDate = new Date();
+    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+    const tomorrowDay = localDateStrIn(tomorrowDate, timezone);
+
+    const hasFutureDay = scheduled.some(
+      (t) => localDateStrIn(new Date(t.scheduled_start), timezone) > tomorrowDay,
+    );
+
+    if (hasFutureDay) {
+      const calendarForCheck = await getCalendarClient(supabase, user.id);
+      if (calendarForCheck) {
+        // Per-day cache: avoids redundant API calls when multiple tasks land on the same day
+        const dayEventsCache = new Map<string, Array<{ start: Date; end: Date }>>();
+        // Tracks cumulative busy intervals (DB + already-placed batch tasks + fetched GCal days)
+        const augmentedBusy = [...existingBusy];
+
+        for (let i = 0; i < scheduled.length; i++) {
+          const scheduledDay = localDateStrIn(new Date(scheduled[i].scheduled_start), timezone);
+
+          if (scheduledDay > tomorrowDay) {
+            // Lazily fetch and cache live GCal events for this day
+            if (!dayEventsCache.has(scheduledDay)) {
+              const liveEvents = await fetchCalendarEventsForDay(
+                calendarForCheck,
+                new Date(scheduled[i].scheduled_start),
+                timezone,
+              );
+              dayEventsCache.set(scheduledDay, liveEvents);
+              augmentedBusy.push(...liveEvents);
+            }
+
+            // Check if this task's slot overlaps any live GCal event on this day
+            const taskStart = new Date(scheduled[i].scheduled_start);
+            const taskEnd   = new Date(scheduled[i].scheduled_end);
+            const dayEvents = dayEventsCache.get(scheduledDay)!;
+            const hasOverlap = dayEvents.some((e) => e.start < taskEnd && e.end > taskStart);
+
+            if (hasOverlap) {
+              console.warn(
+                `[batch-create] "${scheduled[i].title}" conflicts with a live GCal event on ${scheduledDay} — rescheduling`,
+              );
+              const fb = fallbackSchedule(
+                augmentedBusy,
+                scheduled[i].estimatedMinutes,
+                scheduled[i].deadline,
+                timezone,
+              );
+              scheduled[i] = { ...scheduled[i], ...fb };
+            }
+          }
+
+          // Track this task's final slot so subsequent tasks avoid it
+          augmentedBusy.push({
+            start: new Date(scheduled[i].scheduled_start),
+            end:   new Date(scheduled[i].scheduled_end),
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[batch-create] Future-day GCal check failed (non-fatal):', err);
+  }
 
   // Bulk insert all tasks
   const rows = scheduled.map((t) => ({

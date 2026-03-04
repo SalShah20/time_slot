@@ -1,5 +1,6 @@
 import { google } from 'googleapis';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { localTimeOnDay } from '@/lib/scheduleUtils';
 
 export function createOAuthClient() {
   return new google.auth.OAuth2(
@@ -33,6 +34,39 @@ export async function getCalendarClient(supabase: SupabaseClient, userId: string
   });
 
   return google.calendar({ version: 'v3', auth: oauth2Client });
+}
+
+/**
+ * Fetches live Google Calendar events for a specific local day and returns them
+ * as busy intervals. Non-fatal — returns [] if the API call fails.
+ */
+export async function fetchCalendarEventsForDay(
+  calendar: ReturnType<typeof google.calendar>,
+  date: Date,
+  timezone: string,
+): Promise<Array<{ start: Date; end: Date }>> {
+  try {
+    const startOfDay = localTimeOnDay(date, 0, 0, timezone, 0);
+    const endOfDay   = localTimeOnDay(date, 0, 0, timezone, 1);
+
+    const res = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin: startOfDay.toISOString(),
+      timeMax: endOfDay.toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime',
+    });
+
+    return (res.data.items ?? [])
+      .filter((e) => e.start?.dateTime && e.end?.dateTime && e.status !== 'cancelled')
+      .map((e) => ({
+        start: new Date(e.start!.dateTime!),
+        end:   new Date(e.end!.dateTime!),
+      }));
+  } catch (err) {
+    console.warn('[fetchCalendarEventsForDay] API call failed:', err);
+    return [];
+  }
 }
 
 /** Delete a GCal event by ID. Non-fatal — swallows errors. */
