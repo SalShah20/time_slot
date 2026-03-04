@@ -54,6 +54,7 @@ Task: ${title}${description ? `\nDescription: ${description}` : ''}${tag ? `\nTa
 
 Guidelines (use history above to override these when relevant):
 - Study/homework: 60–180 min
+- "midterm", "final", "essay", "paper", "lab report": longer, often 2+ hours
 - Work tasks: 60–240 min
 - Personal errands: 30–90 min
 - Exercise: 30–90 min

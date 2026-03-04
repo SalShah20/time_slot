@@ -91,6 +91,9 @@ RULES:
 5. Start at least 10 minutes from NOW to give the user time to prepare
 6. If there is no estimated duration, estimate based on the task name, description, similar tasks, and tags
 7. If multiple valid slots, pick the earliest one
+8. The earlier the deadline, the earlier the task should be scheduled.
+9. Give the user at least 15 minutes breaks in between tasks to avoid burnout
+10. For longer tasks with later due dates, it is ok to break them up into multiple sessions (ie. research papers, studying for a hard exam,...)
 
 Respond ONLY with this JSON (no extra text):
 {"scheduled_start":"ISO 8601 timestamp","reasoning":"one sentence"}`;
