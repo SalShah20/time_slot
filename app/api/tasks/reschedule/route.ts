@@ -64,9 +64,25 @@ export async function POST(req: NextRequest) {
     // user's timezone.  Using localTimeOnDay avoids the UTC-midnight-vs-local-midnight
     // mismatch that causes events at e.g. 8 PM EST to be invisible to the reschedule query.
     const todayStart = localTimeOnDay(now, 0, 0, timezone, 0).toISOString();
+
+    // Fetch task-owned GCal event IDs so we can exclude them from calIntervals.
+    // Task-owned events represent the same time slots as the tasks themselves — including
+    // them would cause every task to "conflict" with its own event, which either triggers
+    // unnecessary rescheduling or (when the fallback pushes past the deadline) leaves the
+    // task stuck at a conflicting time with needs_rescheduling=true.
+    const { data: taskEventRows } = await supabase
+      .from('tasks')
+      .select('google_event_id')
+      .eq('user_id', user.id)
+      .not('google_event_id', 'is', null)
+      .not('status', 'in', '("completed","cancelled")');
+    const taskOwnedEventIds = new Set(
+      (taskEventRows ?? []).map((r) => r.google_event_id as string).filter(Boolean),
+    );
+
     const { data: calEvents, error: eventsError } = await supabase
       .from('calendar_events')
-      .select('title, start_time, end_time, is_busy')
+      .select('google_event_id, start_time, end_time, is_busy')
       .eq('user_id', user.id)
       .eq('is_busy', true)
       .gte('start_time', todayStart)
@@ -77,10 +93,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `DB error fetching events: ${eventsError.message}` }, { status: 500 });
     }
 
-    const calIntervals: BusyInterval[] = (calEvents ?? []).map((e) => ({
-      start: new Date(e.start_time),
-      end: new Date(e.end_time),
-    }));
+    const calIntervals: BusyInterval[] = (calEvents ?? [])
+      .filter((e) => !taskOwnedEventIds.has(e.google_event_id))
+      .map((e) => ({
+        start: new Date(e.start_time),
+        end: new Date(e.end_time),
+      }));
 
     // Get GCal client once (null if calendar not connected)
     const calendar = await getCalendarClient(supabase, user.id);
