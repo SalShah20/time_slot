@@ -11,7 +11,7 @@ export function createOAuthClient() {
 }
 
 export const CALENDAR_SCOPES = [
-  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/calendar',
 ];
 
 /** Returns an authenticated Google Calendar client, or null if no tokens stored. */
@@ -69,14 +69,82 @@ export async function fetchCalendarEventsForDay(
   }
 }
 
+/** Priority label → Google Calendar colorId. */
+export function getPriorityColorId(priority?: string | null): string {
+  switch (priority?.toLowerCase()) {
+    case 'high':   return '11'; // Tomato
+    case 'low':    return '8';  // Graphite
+    case 'medium':
+    default:       return '10'; // Sage
+  }
+}
+
+/**
+ * Returns the stored TimeSlot calendar ID for a user, or 'primary' if not set.
+ * Fast read-only DB query — no API call.
+ */
+export async function getTimeSlotCalendarId(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<string> {
+  const { data } = await supabase
+    .from('user_tokens')
+    .select('google_calendar_id')
+    .eq('user_id', userId)
+    .single();
+  return (data as { google_calendar_id?: string | null } | null)?.google_calendar_id ?? 'primary';
+}
+
+/**
+ * Ensures the "TimeSlot" calendar exists for this user.
+ * Creates it if missing, stores the ID in user_tokens, tries to set the brand color.
+ * Falls back to 'primary' on any error (e.g. insufficient OAuth scope).
+ */
+export async function getOrCreateTimeSlotCalendar(
+  supabase: SupabaseClient,
+  userId: string,
+  calendar: ReturnType<typeof google.calendar>,
+): Promise<string> {
+  const stored = await getTimeSlotCalendarId(supabase, userId);
+  if (stored !== 'primary') return stored;
+
+  try {
+    const newCal = await calendar.calendars.insert({
+      requestBody: { summary: 'TimeSlot' },
+    });
+    const calId = newCal.data.id;
+    if (!calId) return 'primary';
+
+    await supabase
+      .from('user_tokens')
+      .update({ google_calendar_id: calId })
+      .eq('user_id', userId);
+
+    // Try to set brand color via calendarList — non-fatal
+    try {
+      await calendar.calendarList.patch({
+        calendarId: calId,
+        requestBody: { backgroundColor: '#028090', foregroundColor: '#ffffff' },
+      });
+    } catch { /* non-fatal */ }
+
+    console.log('[getOrCreateTimeSlotCalendar] Created TimeSlot calendar:', calId);
+    return calId;
+  } catch (err) {
+    console.warn('[getOrCreateTimeSlotCalendar] Could not create calendar — falling back to primary:', err);
+    return 'primary';
+  }
+}
+
 /** Delete a GCal event by ID. Non-fatal — swallows errors. */
 export async function deleteCalendarEvent(
   calendar: ReturnType<typeof google.calendar>,
   eventId: string,
+  calendarId = 'primary',
 ): Promise<void> {
   try {
-    await calendar.events.delete({ calendarId: 'primary', eventId });
-    console.log('[deleteCalendarEvent] deleted', eventId);
+    await calendar.events.delete({ calendarId, eventId });
+    console.log('[deleteCalendarEvent] deleted', eventId, 'from', calendarId);
   } catch (err) {
     console.warn('[deleteCalendarEvent] failed to delete', eventId, err);
   }

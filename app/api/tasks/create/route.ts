@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
-import { getCalendarClient, fetchCalendarEventsForDay } from '@/lib/googleCalendar';
-import { getTagColor } from '@/lib/tagColors';
+import { getCalendarClient, fetchCalendarEventsForDay, getOrCreateTimeSlotCalendar, getPriorityColorId } from '@/lib/googleCalendar';
 import { fallbackSchedule, localHourIn, localDateStrIn } from '@/lib/scheduleUtils';
 import type { BusyInterval } from '@/lib/scheduleUtils';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -325,19 +324,19 @@ export async function POST(req: NextRequest) {
       try {
         const calendar = await getCalendarClient(supabase, user.id);
         if (calendar) {
-          const tagColor = getTagColor(tag);
+          const calId = await getOrCreateTimeSlotCalendar(supabase, user.id, calendar);
           await Promise.all(
             allSessions.map(async (sess) => {
               const suffix = ` (${(sess as Record<string, unknown>).session_number}/${sessions.length})`;
               try {
                 const gcalEvent = await calendar.events.insert({
-                  calendarId:  'primary',
+                  calendarId:  calId,
                   requestBody: {
                     summary:     title + suffix,
                     description: description ?? '',
                     start:       { dateTime: sess.scheduled_start! },
                     end:         { dateTime: sess.scheduled_end! },
-                    colorId:     tagColor.gcalColorId,
+                    colorId:     getPriorityColorId(priority),
                   },
                 });
                 const eventId = gcalEvent.data.id;
@@ -393,15 +392,15 @@ export async function POST(req: NextRequest) {
   try {
     const calendar = await getCalendarClient(supabase, user.id);
     if (calendar) {
-      const tagColor = getTagColor(tag);
+      const calId = await getOrCreateTimeSlotCalendar(supabase, user.id, calendar);
       const gcalEvent = await calendar.events.insert({
-        calendarId: 'primary',
+        calendarId: calId,
         requestBody: {
           summary:     title,
           description: description ?? '',
           start:       { dateTime: finalScheduledStart },
           end:         { dateTime: finalScheduledEnd },
-          colorId:     tagColor.gcalColorId,
+          colorId:     getPriorityColorId(priority),
         },
       });
 

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
-import { getCalendarClient, deleteCalendarEvent } from '@/lib/googleCalendar';
-import { getTagColor } from '@/lib/tagColors';
+import { getCalendarClient, deleteCalendarEvent, getTimeSlotCalendarId, getPriorityColorId } from '@/lib/googleCalendar';
 import { fallbackSchedule, localTimeOnDay } from '@/lib/scheduleUtils';
 import type { BusyInterval } from '@/lib/scheduleUtils';
 
@@ -48,7 +47,7 @@ export async function POST(req: NextRequest) {
     // Lower bound is 7 days ago so past-due tasks that were never started are included.
     const { data: pendingTasks, error: tasksError } = await supabase
       .from('tasks')
-      .select('id, title, description, tag, estimated_minutes, scheduled_start, scheduled_end, deadline, status, google_event_id')
+      .select('id, title, description, tag, priority, estimated_minutes, scheduled_start, scheduled_end, deadline, status, google_event_id')
       .eq('user_id', user.id)
       .eq('status', 'pending')
       .gte('scheduled_start', sevenDaysAgo)
@@ -100,8 +99,11 @@ export async function POST(req: NextRequest) {
         end: new Date(e.end_time),
       }));
 
-    // Get GCal client once (null if calendar not connected)
-    const calendar = await getCalendarClient(supabase, user.id);
+    // Get GCal client + TimeSlot calendar ID once
+    const [calendar, calId] = await Promise.all([
+      getCalendarClient(supabase, user.id),
+      getTimeSlotCalendarId(supabase, user.id),
+    ]);
 
     const rescheduled: { id: string; title: string; scheduled_start: string; scheduled_end: string }[] = [];
 
@@ -152,18 +154,17 @@ export async function POST(req: NextRequest) {
         let newEventId: string | null = null;
         if (calendar) {
           if (task.google_event_id) {
-            await deleteCalendarEvent(calendar, task.google_event_id);
+            await deleteCalendarEvent(calendar, task.google_event_id, calId);
           }
           try {
-            const tagColor = getTagColor(task.tag ?? undefined);
             const gcalEvent = await calendar.events.insert({
-              calendarId: 'primary',
+              calendarId: calId,
               requestBody: {
                 summary:     task.title,
                 description: task.description ?? '',
                 start:       { dateTime: scheduled_start },
                 end:         { dateTime: scheduled_end },
-                colorId:     tagColor.gcalColorId,
+                colorId:     getPriorityColorId(task.priority),
               },
             });
             newEventId = gcalEvent.data.id ?? null;

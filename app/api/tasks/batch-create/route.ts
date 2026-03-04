@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
-import { getCalendarClient, fetchCalendarEventsForDay } from '@/lib/googleCalendar';
-import { getTagColor } from '@/lib/tagColors';
+import { getCalendarClient, fetchCalendarEventsForDay, getOrCreateTimeSlotCalendar, getPriorityColorId } from '@/lib/googleCalendar';
 import { fallbackSchedule, localHourIn, localDateStrIn } from '@/lib/scheduleUtils';
 import type { BusyInterval } from '@/lib/scheduleUtils';
 import { estimateDurationWithLLM } from '@/lib/estimateDuration';
@@ -503,6 +502,7 @@ export async function POST(req: NextRequest) {
   try {
     const calendar = await getCalendarClient(supabase, user.id);
     if (calendar && allInserted.length > 0) {
+      const calId = await getOrCreateTimeSlotCalendar(supabase, user.id, calendar);
       // Build a flat list mapping each inserted row to its original task + session info
       interface GCalTarget {
         taskRow:        Record<string, unknown>;
@@ -534,17 +534,16 @@ export async function POST(req: NextRequest) {
       await Promise.all(
         gcalTargets.map(async ({ taskRow, originalTask, sessionNumber, totalSessions }) => {
           if (!taskRow) return;
-          const tagColor = getTagColor(originalTask.tag);
-          const suffix   = totalSessions > 1 ? ` (${sessionNumber}/${totalSessions})` : '';
+          const suffix = totalSessions > 1 ? ` (${sessionNumber}/${totalSessions})` : '';
           try {
             const gcalEvent = await calendar.events.insert({
-              calendarId:  'primary',
+              calendarId:  calId,
               requestBody: {
                 summary:     (taskRow.title as string) + suffix,
                 description: (taskRow.description as string) ?? '',
                 start:       { dateTime: taskRow.scheduled_start as string },
                 end:         { dateTime: taskRow.scheduled_end as string },
-                colorId:     tagColor.gcalColorId,
+                colorId:     getPriorityColorId(originalTask.priority),
               },
             });
             const eventId = gcalEvent.data.id;

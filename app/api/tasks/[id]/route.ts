@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
-import { getCalendarClient, deleteCalendarEvent } from '@/lib/googleCalendar';
-import { getTagColor } from '@/lib/tagColors';
+import { getCalendarClient, deleteCalendarEvent, getTimeSlotCalendarId, getPriorityColorId } from '@/lib/googleCalendar';
 
 export async function PATCH(
   req: NextRequest,
@@ -63,22 +62,24 @@ export async function PATCH(
 
   // Sync GCal event whenever one exists — patch in-place so the event ID stays stable
   if (existing.google_event_id) {
-    const calendar = await getCalendarClient(supabase, user.id);
+    const [calendar, calId] = await Promise.all([
+      getCalendarClient(supabase, user.id),
+      getTimeSlotCalendarId(supabase, user.id),
+    ]);
     if (calendar) {
       try {
-        const finalStart = (update.scheduled_start as string | undefined) ?? (existing.scheduled_start as string);
-        const finalEnd   = (update.scheduled_end   as string | undefined) ?? (existing.scheduled_end   as string);
-        const tagValue   = (update.tag as string | undefined) ?? (existing.tag as string | null) ?? undefined;
-        const tagColor   = getTagColor(tagValue);
+        const finalStart    = (update.scheduled_start as string | undefined) ?? (existing.scheduled_start as string);
+        const finalEnd      = (update.scheduled_end   as string | undefined) ?? (existing.scheduled_end   as string);
+        const priorityValue = (update.priority as string | undefined) ?? (existing.priority as string | null);
         await calendar.events.patch({
-          calendarId: 'primary',
+          calendarId: calId,
           eventId:    existing.google_event_id as string,
           requestBody: {
             summary:     (update.title       as string | undefined) ?? (existing.title       as string),
             description: (update.description as string | undefined) ?? (existing.description as string | null) ?? '',
             start:       { dateTime: finalStart },
             end:         { dateTime: finalEnd },
-            colorId:     tagColor.gcalColorId,
+            colorId:     getPriorityColorId(priorityValue),
           },
         });
       } catch (err) {
@@ -126,8 +127,11 @@ export async function DELETE(
   }
 
   if (task.google_event_id) {
-    const calendar = await getCalendarClient(supabase, user.id);
-    if (calendar) await deleteCalendarEvent(calendar, task.google_event_id as string);
+    const [calendar, calId] = await Promise.all([
+      getCalendarClient(supabase, user.id),
+      getTimeSlotCalendarId(supabase, user.id),
+    ]);
+    if (calendar) await deleteCalendarEvent(calendar, task.google_event_id as string, calId);
   }
 
   const { error } = await supabase

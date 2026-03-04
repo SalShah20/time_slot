@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
-import { getCalendarClient, deleteCalendarEvent } from '@/lib/googleCalendar';
+import { getCalendarClient, deleteCalendarEvent, getTimeSlotCalendarId } from '@/lib/googleCalendar';
 import type { LocalSession } from '@/types/timer';
 
 export async function POST(req: NextRequest) {
@@ -82,8 +82,11 @@ export async function POST(req: NextRequest) {
   const googleEventId = (taskRow as Record<string, unknown> | null)?.google_event_id as string | null;
   if (googleEventId) {
     try {
-      const calendar = await getCalendarClient(supabase, user.id);
-      if (calendar) await deleteCalendarEvent(calendar, googleEventId);
+      const [calendar, calId] = await Promise.all([
+        getCalendarClient(supabase, user.id),
+        getTimeSlotCalendarId(supabase, user.id),
+      ]);
+      if (calendar) await deleteCalendarEvent(calendar, googleEventId, calId);
     } catch (err) {
       console.warn('[/api/timer/complete] GCal cleanup failed:', err);
     }

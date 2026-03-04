@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
-import { createOAuthClient } from '@/lib/googleCalendar';
+import { createOAuthClient, getOrCreateTimeSlotCalendar } from '@/lib/googleCalendar';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 import { localTimeOnDay } from '@/lib/scheduleUtils';
 
@@ -49,6 +49,13 @@ export async function POST(req: NextRequest) {
   });
 
   const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+  // Ensure the dedicated TimeSlot calendar exists (creates it on first sync, non-fatal)
+  try {
+    await getOrCreateTimeSlotCalendar(supabase, user.id, calendar);
+  } catch (err) {
+    console.warn('[/api/calendar/sync] TimeSlot calendar setup failed (non-fatal):', err);
+  }
 
   // Fetch events for today + tomorrow (use user's local timezone for date boundaries)
   const now = new Date();
