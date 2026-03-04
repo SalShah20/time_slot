@@ -133,7 +133,9 @@ function TaskBlock({ task, colStyle, onEdit }: { task: TaskRow; colStyle?: React
       title={onEdit ? `${task.title} — click to edit` : task.title}
       onClick={onEdit}
     >
-      <p className="text-xs font-semibold truncate leading-tight">{task.title}</p>
+      <p className="text-xs font-semibold truncate leading-tight">
+        {task.title}{(task.total_sessions ?? 1) > 1 ? ` (${task.session_number}/${task.total_sessions})` : ''}
+      </p>
       <div className="flex items-center gap-1.5 mt-0.5">
         <p className="text-xs opacity-60">{task.estimated_minutes}m</p>
         {isSleepHour && (

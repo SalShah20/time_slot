@@ -10,7 +10,8 @@ export async function GET() {
     .from('tasks')
     .select('status')
     .eq('user_id', user.id)
-    .neq('status', 'cancelled');
+    .neq('status', 'cancelled')
+    .is('parent_task_id', null);
 
   if (error) {
     console.error('[GET /api/tasks/stats]', error);

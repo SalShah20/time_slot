@@ -275,7 +275,21 @@ export default function Home() {
 
   const handleTasksCreated = useCallback((newTasks: TaskRow[]) => {
     setTasks((prev) => [...prev, ...newTasks]);
-    showToast(`${newTasks.length} task${newTasks.length !== 1 ? 's' : ''} added and scheduled!`);
+    const parentTasks = newTasks.filter((t) => !t.parent_task_id);
+    const splitTasks  = parentTasks.filter((t) => (t.total_sessions ?? 1) > 1);
+    if (splitTasks.length === 1 && parentTasks.length === 1) {
+      const t    = splitTasks[0];
+      const days = new Set(newTasks.map((s) => s.scheduled_start?.slice(0, 10)).filter(Boolean)).size;
+      showToast(
+        `"${t.title}" split into ${t.total_sessions} sessions across ${days} day${days !== 1 ? 's' : ''}`,
+      );
+    } else if (splitTasks.length > 0) {
+      showToast(
+        `${parentTasks.length} task${parentTasks.length !== 1 ? 's' : ''} scheduled (${splitTasks.length} split into sessions)`,
+      );
+    } else {
+      showToast(`${parentTasks.length} task${parentTasks.length !== 1 ? 's' : ''} added and scheduled!`);
+    }
   }, []);
 
   const handleComplete = useCallback((stats: CompletionStats) => {
@@ -338,7 +352,7 @@ export default function Home() {
 
   // ── Upcoming task list (left panel) ─────────────────────────────────────────
   const upcomingTasks = tasks
-    .filter((t) => t.status === 'pending' || t.status === 'in_progress')
+    .filter((t) => (t.status === 'pending' || t.status === 'in_progress') && !t.parent_task_id)
     .sort((a, b) => {
       if (!a.scheduled_start) return 1;
       if (!b.scheduled_start) return -1;
@@ -583,6 +597,11 @@ export default function Home() {
                           <p className={`text-sm font-medium truncate ${isDone ? 'line-through text-surface-400' : 'text-surface-900'}`}>
                             {task.title}
                           </p>
+                          {(task.total_sessions ?? 1) > 1 && (
+                            <span className="text-xs text-teal-600">
+                              {task.total_sessions} sessions
+                            </span>
+                          )}
                           {task.needs_rescheduling && (
                             <p className="text-xs font-medium text-amber-600 mt-0.5">
                               ⚠ Can&apos;t fit before deadline — reschedule manually

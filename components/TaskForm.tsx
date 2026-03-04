@@ -17,6 +17,8 @@ export interface TaskInput {
 
 interface Props {
   onTaskCreated: (task: TaskRow) => void;
+  /** Called instead of onTaskCreated when a task is split into multiple sessions. */
+  onTasksCreated?: (tasks: TaskRow[]) => void;
   hideHeader?: boolean;
   /** If provided, the form operates in "queue" mode: validates then calls this instead of the API. */
   onQueue?: (task: TaskInput) => void;
@@ -41,7 +43,7 @@ const PRIORITY_OPTIONS = [
 ] as const;
 type Priority = 'low' | 'medium' | 'high';
 
-export default function TaskForm({ onTaskCreated, hideHeader = false, onQueue }: Props) {
+export default function TaskForm({ onTaskCreated, onTasksCreated, hideHeader = false, onQueue }: Props) {
   const [title, setTitle]               = useState('');
   const [description, setDescription]   = useState('');
   const [deadlineDate, setDeadlineDate] = useState('');
@@ -132,12 +134,17 @@ export default function TaskForm({ onTaskCreated, hideHeader = false, onQueue }:
         throw new Error(errMsg);
       }
 
-      const task: TaskRow = await res.json();
+      const result = await res.json() as { tasks: TaskRow[] };
+      const sessions = result.tasks ?? [];
       if (tag.trim()) {
         saveUserTag(tag.trim());
         setCustomTags(getUserTags());
       }
-      onTaskCreated(task);
+      if (sessions.length > 1 && onTasksCreated) {
+        onTasksCreated(sessions);
+      } else {
+        onTaskCreated(sessions[0]);
+      }
 
       // Reset form
       resetForm();

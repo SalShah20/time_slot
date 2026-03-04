@@ -7,6 +7,7 @@ import type { BusyInterval } from '@/lib/scheduleUtils';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { estimateDurationWithLLM } from '@/lib/estimateDuration';
 import { fetchUserTimingHistory } from '@/lib/timingHistory';
+import { computeSplitSessions } from '@/lib/splitSchedule';
 
 /** LLM-powered smart scheduler using GPT-4o-mini. Falls back to simple scheduling on any error. */
 async function scheduleWithLLM(
@@ -271,6 +272,95 @@ export async function POST(req: NextRequest) {
     status:            'pending',
   };
 
+  // ── Split trigger ───────────────────────────────────────────────────────────
+  // Attempt splitting only when a deadline exists and the best single slot misses it.
+  const shouldSplit =
+    deadline &&
+    new Date(finalScheduledEnd) > new Date(deadline) &&
+    new Date(deadline) > new Date();
+
+  if (shouldSplit) {
+    const sessions = await computeSplitSessions(
+      { title, estimatedMinutes: finalEstimatedMinutes, deadline, priority, tag },
+      initialBusy,
+      new Date(deadline),
+      timezone,
+    );
+
+    if (sessions && sessions.length > 1) {
+      // Insert session 1 first to get its ID
+      const { data: s1, error: s1err } = await supabase
+        .from('tasks')
+        .insert({
+          ...baseInsert,
+          estimated_minutes: sessions[0].durationMinutes,
+          scheduled_start:   sessions[0].scheduled_start,
+          scheduled_end:     sessions[0].scheduled_end,
+          session_number:    1,
+          total_sessions:    sessions.length,
+        })
+        .select('*')
+        .single();
+
+      if (s1err) {
+        console.error('[/api/tasks/create] split session 1 insert:', s1err);
+        return NextResponse.json({ error: s1err.message }, { status: 500 });
+      }
+
+      // Insert sessions 2..N (children)
+      const childRows = sessions.slice(1).map((s, i) => ({
+        ...baseInsert,
+        estimated_minutes: s.durationMinutes,
+        scheduled_start:   s.scheduled_start,
+        scheduled_end:     s.scheduled_end,
+        session_number:    i + 2,
+        total_sessions:    sessions.length,
+        parent_task_id:    s1.id,
+      }));
+
+      const { data: children } = await supabase.from('tasks').insert(childRows).select('*');
+      const allSessions = [s1, ...(children ?? [])];
+
+      // Create GCal events for all sessions — non-fatal
+      try {
+        const calendar = await getCalendarClient(supabase, user.id);
+        if (calendar) {
+          const tagColor = getTagColor(tag);
+          await Promise.all(
+            allSessions.map(async (sess) => {
+              const suffix = ` (${(sess as Record<string, unknown>).session_number}/${sessions.length})`;
+              try {
+                const gcalEvent = await calendar.events.insert({
+                  calendarId:  'primary',
+                  requestBody: {
+                    summary:     title + suffix,
+                    description: description ?? '',
+                    start:       { dateTime: sess.scheduled_start! },
+                    end:         { dateTime: sess.scheduled_end! },
+                    colorId:     tagColor.gcalColorId,
+                  },
+                });
+                const eventId = gcalEvent.data.id;
+                if (eventId) {
+                  await supabase.from('tasks').update({ google_event_id: eventId }).eq('id', sess.id);
+                  (sess as Record<string, unknown>).google_event_id = eventId;
+                }
+              } catch (err) {
+                console.warn(`[/api/tasks/create] GCal for split session:`, err);
+              }
+            }),
+          );
+        }
+      } catch (err) {
+        console.error('[/api/tasks/create] split GCal:', err);
+      }
+
+      return NextResponse.json({ tasks: allSessions });
+    }
+    // Split returned null (not enough blocks) → fall through to single insert
+  }
+
+  // ── Single-session insert ───────────────────────────────────────────────────
   let { data, error } = await supabase
     .from('tasks')
     .insert({ ...baseInsert, scheduled_end: finalScheduledEnd })
@@ -328,5 +418,5 @@ export async function POST(req: NextRequest) {
     console.error('[/api/tasks/create] Google Calendar event creation:', err);
   }
 
-  return NextResponse.json(data);
+  return NextResponse.json({ tasks: [data] });
 }

@@ -6,6 +6,8 @@ import { fallbackSchedule, localHourIn, localDateStrIn } from '@/lib/scheduleUti
 import type { BusyInterval } from '@/lib/scheduleUtils';
 import { estimateDurationWithLLM } from '@/lib/estimateDuration';
 import { fetchUserTimingHistory } from '@/lib/timingHistory';
+import { computeSplitSessions } from '@/lib/splitSchedule';
+import type { SplitSession } from '@/lib/splitSchedule';
 
 interface TaskInput {
   title: string;
@@ -19,6 +21,70 @@ interface TaskInput {
 interface ScheduledTask extends TaskInput {
   scheduled_start: string;
   scheduled_end: string;
+}
+
+interface BatchResult {
+  task: ScheduledTask;
+  sessions: SplitSession[]; // length 1 for non-split
+}
+
+function singleSession(t: ScheduledTask): SplitSession {
+  return {
+    scheduled_start: t.scheduled_start,
+    scheduled_end:   t.scheduled_end,
+    durationMinutes: t.estimatedMinutes,
+  };
+}
+
+/**
+ * Post-processes LLM-scheduled tasks: for any task whose slot misses its deadline,
+ * attempts to split it. Rebuilds allBusy incrementally so each split uses up-to-date
+ * availability (discarding the failed single-slot for that task).
+ */
+async function applyBatchSplitting(
+  llmScheduled: ScheduledTask[],
+  existingBusy: BusyInterval[],
+  timezone: string,
+): Promise<BatchResult[]> {
+  const results: BatchResult[] = [];
+  const allBusy = [...existingBusy];
+  const now     = new Date();
+
+  for (const task of llmScheduled) {
+    const deadline     = task.deadline ? new Date(task.deadline) : null;
+    const missesDeadline = deadline && new Date(task.scheduled_end) > deadline && deadline > now;
+
+    if (missesDeadline) {
+      // Do NOT add the discarded LLM slot to allBusy — let computeSplitSessions use
+      // the current allBusy which doesn't include this task's failed slot.
+      const sessions = await computeSplitSessions(
+        {
+          title:            task.title,
+          estimatedMinutes: task.estimatedMinutes,
+          deadline:         task.deadline!,
+          priority:         task.priority,
+          tag:              task.tag,
+        },
+        allBusy,
+        deadline,
+        timezone,
+      );
+
+      if (sessions && sessions.length > 1) {
+        for (const s of sessions) {
+          allBusy.push({ start: new Date(s.scheduled_start), end: new Date(s.scheduled_end) });
+        }
+        results.push({ task, sessions });
+        continue;
+      }
+    }
+
+    // Non-split or split failed: use the LLM/fallback slot as-is
+    results.push({ task, sessions: [singleSession(task)] });
+    allBusy.push({ start: new Date(task.scheduled_start), end: new Date(task.scheduled_end) });
+  }
+
+  return results;
 }
 
 /** Lower score = more urgent = scheduled first. */
@@ -294,6 +360,7 @@ export async function POST(req: NextRequest) {
 
   // Schedule all tasks together (one LLM call)
   const scheduled = await scheduleBatchWithLLM(sortedTasks, existingBusy, timezone);
+  // Retain reference to existingBusy for applyBatchSplitting below.
 
   // Post-scheduling: for any task landing beyond tomorrow, fetch live GCal events
   // for that day and re-schedule if the slot conflicts (DB only caches today+tomorrow).
@@ -362,67 +429,143 @@ export async function POST(req: NextRequest) {
     console.warn('[batch-create] Future-day GCal check failed (non-fatal):', err);
   }
 
-  // Bulk insert all tasks
-  const rows = scheduled.map((t) => ({
+  // Post-process: attempt splitting for tasks whose slots miss their deadlines
+  const results = await applyBatchSplitting(scheduled, existingBusy, timezone);
+
+  // ── Insert session-1 rows (one per task) ───────────────────────────────────
+  const session1Rows = results.map((r) => ({
     user_id:           user.id,
-    title:             t.title,
-    description:       t.description ?? null,
-    tag:               t.tag ?? null,
-    estimated_minutes: t.estimatedMinutes,
-    priority:          t.priority ?? null,
-    deadline:          t.deadline ?? null,
-    scheduled_start:   t.scheduled_start,
-    scheduled_end:     t.scheduled_end,
+    title:             r.task.title,
+    description:       r.task.description ?? null,
+    tag:               r.task.tag ?? null,
+    estimated_minutes: r.sessions[0].durationMinutes,
+    priority:          r.task.priority ?? null,
+    deadline:          r.task.deadline ?? null,
+    scheduled_start:   r.sessions[0].scheduled_start,
+    scheduled_end:     r.sessions[0].scheduled_end,
     status:            'pending',
+    session_number:    1,
+    total_sessions:    r.sessions.length,
   }));
 
-  const { data: insertedTasks, error: insertError } = await supabase
+  const { data: insertedSession1, error: s1Error } = await supabase
     .from('tasks')
-    .insert(rows)
+    .insert(session1Rows)
     .select('*');
 
-  if (insertError) {
-    console.error('[/api/tasks/batch-create]', insertError);
-    return NextResponse.json({ error: insertError.message }, { status: 500 });
+  if (s1Error) {
+    console.error('[/api/tasks/batch-create]', s1Error);
+    return NextResponse.json({ error: s1Error.message }, { status: 500 });
   }
 
-  // Create GCal events in parallel — non-fatal
+  // ── Insert child rows for split tasks (sessions 2..N) ──────────────────────
+  const childRows: Record<string, unknown>[] = [];
+  for (let i = 0; i < results.length; i++) {
+    const r        = results[i];
+    const parentId = insertedSession1![i].id;
+    for (let k = 1; k < r.sessions.length; k++) {
+      childRows.push({
+        user_id:           user.id,
+        title:             r.task.title,
+        description:       r.task.description ?? null,
+        tag:               r.task.tag ?? null,
+        estimated_minutes: r.sessions[k].durationMinutes,
+        priority:          r.task.priority ?? null,
+        deadline:          r.task.deadline ?? null,
+        scheduled_start:   r.sessions[k].scheduled_start,
+        scheduled_end:     r.sessions[k].scheduled_end,
+        status:            'pending',
+        session_number:    k + 1,
+        total_sessions:    r.sessions.length,
+        parent_task_id:    parentId,
+      });
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let insertedChildren: any[] = [];
+  if (childRows.length > 0) {
+    const { data: children, error: childError } = await supabase
+      .from('tasks')
+      .insert(childRows)
+      .select('*');
+    if (childError) {
+      console.error('[/api/tasks/batch-create] child session insert:', childError);
+      // Non-fatal: parent tasks are already inserted; proceed without children
+    } else {
+      insertedChildren = children ?? [];
+    }
+  }
+
+  const allInserted = [...(insertedSession1 ?? []), ...insertedChildren];
+
+  // ── Create GCal events in parallel — non-fatal ────────────────────────────
   try {
     const calendar = await getCalendarClient(supabase, user.id);
-    if (calendar && insertedTasks) {
-      const gcalPromises = insertedTasks.map(async (task, i) => {
-        const s = scheduled[i];
-        const tagColor = getTagColor(s.tag);
-        try {
-          const gcalEvent = await calendar.events.insert({
-            calendarId: 'primary',
-            requestBody: {
-              summary:     task.title,
-              description: task.description ?? '',
-              start:       { dateTime: task.scheduled_start },
-              end:         { dateTime: task.scheduled_end },
-              colorId:     tagColor.gcalColorId,
-            },
+    if (calendar && allInserted.length > 0) {
+      // Build a flat list mapping each inserted row to its original task + session info
+      interface GCalTarget {
+        taskRow:        Record<string, unknown>;
+        originalTask:   ScheduledTask;
+        sessionNumber:  number;
+        totalSessions:  number;
+      }
+      const gcalTargets: GCalTarget[] = [];
+      let childIdx = 0;
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        gcalTargets.push({
+          taskRow:       insertedSession1![i] as Record<string, unknown>,
+          originalTask:  r.task,
+          sessionNumber: 1,
+          totalSessions: r.sessions.length,
+        });
+        for (let k = 1; k < r.sessions.length; k++) {
+          gcalTargets.push({
+            taskRow:       insertedChildren[childIdx] as Record<string, unknown>,
+            originalTask:  r.task,
+            sessionNumber: k + 1,
+            totalSessions: r.sessions.length,
           });
-          const eventId = gcalEvent.data.id;
-          if (eventId) {
-            await supabase
-              .from('tasks')
-              .update({ google_event_id: eventId })
-              .eq('id', task.id);
-            (task as Record<string, unknown>).google_event_id = eventId;
-          }
-        } catch (err) {
-          console.warn(`[/api/tasks/batch-create] GCal event creation failed for "${task.title}":`, err);
+          childIdx++;
         }
-      });
-      await Promise.all(gcalPromises);
+      }
+
+      await Promise.all(
+        gcalTargets.map(async ({ taskRow, originalTask, sessionNumber, totalSessions }) => {
+          if (!taskRow) return;
+          const tagColor = getTagColor(originalTask.tag);
+          const suffix   = totalSessions > 1 ? ` (${sessionNumber}/${totalSessions})` : '';
+          try {
+            const gcalEvent = await calendar.events.insert({
+              calendarId:  'primary',
+              requestBody: {
+                summary:     (taskRow.title as string) + suffix,
+                description: (taskRow.description as string) ?? '',
+                start:       { dateTime: taskRow.scheduled_start as string },
+                end:         { dateTime: taskRow.scheduled_end as string },
+                colorId:     tagColor.gcalColorId,
+              },
+            });
+            const eventId = gcalEvent.data.id;
+            if (eventId) {
+              await supabase.from('tasks').update({ google_event_id: eventId }).eq('id', taskRow.id);
+              taskRow.google_event_id = eventId;
+            }
+          } catch (err) {
+            console.warn(
+              `[/api/tasks/batch-create] GCal event creation failed for "${taskRow.title as string}${suffix}":`,
+              err,
+            );
+          }
+        }),
+      );
     }
   } catch (err) {
     console.error('[/api/tasks/batch-create] GCal batch creation:', err);
   }
 
-  return NextResponse.json({ tasks: insertedTasks });
+  return NextResponse.json({ tasks: allInserted });
   } catch (err) {
     console.error('[/api/tasks/batch-create] Unhandled error:', err);
     return NextResponse.json(

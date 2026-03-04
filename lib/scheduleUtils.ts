@@ -4,14 +4,14 @@ export interface BusyInterval {
 }
 
 /** First hour tasks may start (inclusive). Preferred window ends at 11 PM. */
-const WORK_START_HOUR = 8; // 8 AM
+export const WORK_START_HOUR = 8; // 8 AM
 /**
  * Hard blackout boundary. Nothing is ever scheduled between LATE_NIGHT_MAX_HOUR
  * (3 AM) and WORK_START_HOUR (8 AM). The midnight – 3 AM range is a valid last
  * resort when earlier slots are all taken (e.g. a packed day with a tight deadline).
  * Preferred scheduling window is 8 AM – 11 PM.
  */
-const LATE_NIGHT_MAX_HOUR = 3; // 3 AM
+export const LATE_NIGHT_MAX_HOUR = 3; // 3 AM
 
 // ─── Timezone-aware helpers ────────────────────────────────────────────────
 
@@ -176,4 +176,97 @@ export function fallbackSchedule(
     scheduled_start: candidate.toISOString(),
     scheduled_end:   finalEnd.toISOString(),
   };
+}
+
+// ─── Free block enumeration ─────────────────────────────────────────────────
+
+export interface FreeBlock {
+  start: Date;
+  end: Date;
+  /** Duration in fractional minutes */
+  durationMinutes: number;
+}
+
+/**
+ * Returns all schedulable free blocks >= minMinutes within [from, to].
+ * Respects the scheduling window: strips the 3 AM–8 AM blackout from every gap.
+ * A gap that spans the blackout is split into sub-blocks before 3 AM and after 8 AM.
+ */
+export function findFreeBlocksInWindow(
+  busyIntervals: BusyInterval[],
+  from: Date,
+  to: Date,
+  minMinutes: number,
+  timezone: string,
+): FreeBlock[] {
+  if (from >= to) return [];
+
+  // Clip busy intervals to [from, to] and sort
+  const clipped = busyIntervals
+    .filter((iv) => iv.end > from && iv.start < to)
+    .map((iv) => ({
+      start: iv.start < from ? from : iv.start,
+      end:   iv.end   > to   ? to   : iv.end,
+    }))
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  // Merge overlapping busy intervals
+  const merged: Array<{ start: Date; end: Date }> = [];
+  for (const iv of clipped) {
+    if (merged.length > 0 && iv.start <= merged[merged.length - 1].end) {
+      merged[merged.length - 1].end = new Date(
+        Math.max(merged[merged.length - 1].end.getTime(), iv.end.getTime()),
+      );
+    } else {
+      merged.push({ start: new Date(iv.start), end: new Date(iv.end) });
+    }
+  }
+
+  // Find raw free gaps within [from, to]
+  const gaps: Array<{ start: Date; end: Date }> = [];
+  let cursor = from;
+  for (const iv of merged) {
+    if (iv.start > cursor) gaps.push({ start: cursor, end: iv.start });
+    if (iv.end > cursor) cursor = iv.end;
+  }
+  if (cursor < to) gaps.push({ start: cursor, end: to });
+
+  // For each gap, extract valid sub-blocks respecting the 3 AM–8 AM blackout
+  const freeBlocks: FreeBlock[] = [];
+
+  for (const gap of gaps) {
+    let subCursor = gap.start;
+    let guard = 0;
+
+    while (subCursor < gap.end && guard < 200) {
+      guard++;
+      const h = localHourIn(subCursor, timezone);
+
+      // Snap out of blackout
+      if (h >= LATE_NIGHT_MAX_HOUR && h < WORK_START_HOUR) {
+        subCursor = localTimeOnDay(subCursor, WORK_START_HOUR, 0, timezone, 0);
+        continue;
+      }
+
+      // Determine end of current valid window (next 3 AM boundary)
+      // 0–2:59 AM → 3 AM same day (dayOffset=0)
+      // 8 AM–midnight → 3 AM next day (dayOffset=1)
+      const validWindowEnd: Date =
+        h < LATE_NIGHT_MAX_HOUR
+          ? localTimeOnDay(subCursor, LATE_NIGHT_MAX_HOUR, 0, timezone, 0)
+          : localTimeOnDay(subCursor, LATE_NIGHT_MAX_HOUR, 0, timezone, 1);
+
+      const blockEnd = new Date(Math.min(validWindowEnd.getTime(), gap.end.getTime()));
+      const durationMinutes = (blockEnd.getTime() - subCursor.getTime()) / 60_000;
+
+      if (durationMinutes >= minMinutes) {
+        freeBlocks.push({ start: new Date(subCursor), end: new Date(blockEnd), durationMinutes });
+      }
+
+      // Advance past the 3 AM–8 AM blackout to next 8 AM
+      subCursor = localTimeOnDay(validWindowEnd, WORK_START_HOUR, 0, timezone, 0);
+    }
+  }
+
+  return freeBlocks.sort((a, b) => a.start.getTime() - b.start.getTime());
 }

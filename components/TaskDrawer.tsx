@@ -44,6 +44,12 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
     onClose();
   };
 
+  const handleSingleTasksCreated = (tasks: TaskRow[]) => {
+    if (onTasksCreated) onTasksCreated(tasks);
+    else tasks.forEach((t) => onTaskCreated(t));
+    onClose();
+  };
+
   // Add one task from the structured form
   const handleAddToQueue = (task: TaskInput) => {
     setQueue((prev) => [...prev, task]);
@@ -232,6 +238,7 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
           ) : (
             <TaskForm
               onTaskCreated={handleTaskCreated}
+              onTasksCreated={handleSingleTasksCreated}
               hideHeader
             />
           )}
