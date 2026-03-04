@@ -41,9 +41,15 @@ export default function Home() {
   const [selectedDate, setSelectedDate]           = useState(new Date());
   const [mobileView, setMobileView]               = useState<'tasks' | 'schedule'>('tasks');
 
-  const userMenuRef  = useRef<HTMLDivElement>(null);
-  const hasSyncedRef = useRef(false);
-  const tasksRef     = useRef<TaskRow[]>([]); // always-current copy for notification callbacks
+  const userMenuRef         = useRef<HTMLDivElement>(null);
+  const hasSyncedRef        = useRef(false);
+  const tasksRef            = useRef<TaskRow[]>([]); // always-current copy for notification callbacks
+  const selectedDateRef     = useRef(selectedDate);  // always-current date for stable fetchBlocks
+  const fetchBlocksAbortRef = useRef<AbortController | null>(null); // cancel stale in-flight fetches
+
+  // Keep selectedDateRef in sync so fetchBlocks (stable identity) always sees the
+  // currently-viewed date without needing selectedDate in its useCallback deps.
+  useEffect(() => { selectedDateRef.current = selectedDate; }, [selectedDate]);
 
   // ── Auth ────────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -87,22 +93,34 @@ export default function Home() {
       .then((r) => r.json())
       .then((d) => { setCalendarConnected(!!d.connected); })
       .catch(() => null);
+  // fetchBlocks is declared below but is stable (empty deps, never changes identity),
+  // so omitting it is safe. Cannot reference it before declaration in the deps array.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Sync Google Calendar events ──────────────────────────────────────────────
+  // Stable identity (no selectedDate dependency) — uses selectedDateRef for the default
+  // date so callers that don't pass an explicit date always get the currently-viewed day.
+  // AbortController cancels any previous in-flight fetch, so the last call always wins
+  // and stale responses can never overwrite newer data.
   const fetchBlocks = useCallback(async (date?: Date) => {
+    fetchBlocksAbortRef.current?.abort();
+    const controller = new AbortController();
+    fetchBlocksAbortRef.current = controller;
     try {
-      const d = date ?? selectedDate;
+      const d = date ?? selectedDateRef.current;
       const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const res = await fetch(`/api/blocks?date=${dateStr}&timezone=${encodeURIComponent(timezone)}`);
+      const res = await fetch(
+        `/api/blocks?date=${dateStr}&timezone=${encodeURIComponent(timezone)}`,
+        { signal: controller.signal },
+      );
       if (res.ok) setBlocks(await res.json());
     } catch (err) {
+      if ((err as Error).name === 'AbortError') return; // expected — a newer call took over
       console.error('[fetchBlocks]', err);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDate]);
+  }, []); // stable — intentionally no deps; uses refs for mutable values
 
   const syncCalendar = useCallback(async () => {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -136,6 +154,7 @@ export default function Home() {
     } catch {
       // network error — ignore silently
     }
+  // fetchTasks is declared below but is stable (empty deps), safe to omit from deps.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchBlocks]);
 
@@ -179,20 +198,17 @@ export default function Home() {
     }
   }, []);
 
-  // Initial load — runs once on mount (fetchTasks has stable identity; fetchBlocks
-  // captures today's selectedDate which is correct for the initial render)
+  // Initial load — both callbacks are now stable, so this correctly runs once.
   useEffect(() => {
     void fetchTasks();
     void fetchBlocks();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchTasks, fetchBlocks]);
 
-  // Re-fetch blocks whenever the viewed date changes (always pass the date explicitly
-  // so we never rely on a stale selectedDate closure)
+  // Re-fetch blocks whenever the viewed date changes. Pass date explicitly so the
+  // AbortController in fetchBlocks can immediately cancel any prior in-flight request.
   useEffect(() => {
     void fetchBlocks(selectedDate);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDate]);
+  }, [selectedDate, fetchBlocks]);
 
   // ── Notifications ────────────────────────────────────────────────────────────
   // Keep ref current so intervals/timeouts always see latest tasks
