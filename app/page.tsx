@@ -33,6 +33,7 @@ export default function Home() {
   const [timerActive, setTimerActive]             = useState(false);
   const [calendarConnected, setCalendarConnected] = useState(false);
   const [calendarSyncError, setCalendarSyncError] = useState(false);
+  const [calendarSyncing, setCalendarSyncing]     = useState(false);
   const [showDrawer, setShowDrawer]               = useState(false);
   const [editingTask, setEditingTask]             = useState<TaskRow | null>(null);
   const [toast, setToast]                         = useState<string | null>(null);
@@ -135,6 +136,11 @@ export default function Home() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchBlocks]);
+
+  const handleManualSync = useCallback(async () => {
+    setCalendarSyncing(true);
+    try { await syncCalendar(); } finally { setCalendarSyncing(false); }
+  }, [syncCalendar]);
 
   // Initial sync when calendar first connects
   useEffect(() => {
@@ -314,16 +320,28 @@ export default function Home() {
         <div className="flex items-center gap-3">
           {/* Google Calendar */}
           {calendarConnected && !calendarSyncError ? (
-            <button
-              onClick={() => void syncCalendar()}
-              className="flex items-center gap-1.5 px-3 py-1.5 border border-teal-200 bg-teal-50 rounded-lg text-xs font-medium text-teal-700 hover:bg-teal-100 transition-colors"
-              title="Click to resync"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-              Google Calendar
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => void handleManualSync()}
+                disabled={calendarSyncing}
+                className="flex items-center gap-1.5 px-3 py-1.5 border border-teal-200 bg-teal-50 rounded-lg text-xs font-medium text-teal-700 hover:bg-teal-100 transition-colors disabled:opacity-60"
+                title="Click to resync"
+              >
+                <svg className={`w-3.5 h-3.5 ${calendarSyncing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  {calendarSyncing
+                    ? <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    : <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />}
+                </svg>
+                {calendarSyncing ? 'Syncing…' : 'Google Calendar'}
+              </button>
+              <a
+                href="/api/calendar/oauth"
+                className="px-2 py-1.5 text-xs text-surface-400 hover:text-teal-600 transition-colors"
+                title="Reconnect Google Calendar to reload all events"
+              >
+                Reconnect
+              </a>
+            </div>
           ) : calendarSyncError ? (
             <a
               href="/api/calendar/oauth"

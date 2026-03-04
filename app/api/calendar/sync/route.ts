@@ -155,8 +155,9 @@ export async function POST(req: NextRequest) {
   }
 
   // Step 3: delete stale entries in the date range that Google no longer returned.
-  // For the no-events case this clears the whole range.
-  {
+  // Guard: only run when Google returned ≥1 event — if Google returns 0 we keep
+  // existing entries to avoid wiping everything on transient API issues or empty days.
+  if (freshIds.length > 0) {
     // Fetch all IDs currently in the date range so we can filter in JS (avoids PostgREST NOT-IN syntax issues)
     const { data: existing } = await supabase
       .from('calendar_events')
