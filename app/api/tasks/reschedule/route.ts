@@ -27,16 +27,18 @@ export async function POST(req: NextRequest) {
   const supabase = createSupabaseServer();
 
   const now        = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-  const twoDaysOut = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2).toISOString();
+  // Look back 7 days so past-due pending tasks (still unstarted) are also rescheduled.
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const twoDaysOut   = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2).toISOString();
 
-  // Fetch all pending tasks (skip in_progress — don't interrupt active work)
+  // Fetch all pending tasks (skip in_progress — don't interrupt active work).
+  // Lower bound is 7 days ago so past-due tasks that were never started are included.
   const { data: pendingTasks, error: tasksError } = await supabase
     .from('tasks')
     .select('id, title, description, tag, estimated_minutes, scheduled_start, scheduled_end, deadline, status, google_event_id')
     .eq('user_id', user.id)
     .eq('status', 'pending')
-    .gte('scheduled_start', todayStart)
+    .gte('scheduled_start', sevenDaysAgo)
     .lt('scheduled_start', twoDaysOut)
     .order('scheduled_start', { ascending: true });
 
@@ -44,7 +46,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: tasksError.message }, { status: 500 });
   }
 
-  // Fetch all calendar events for today+tomorrow
+  // Fetch calendar events for today+tomorrow (the window we're scheduling into)
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
   const { data: calEvents, error: eventsError } = await supabase
     .from('calendar_events')
     .select('title, start_time, end_time, is_busy')
@@ -88,9 +91,11 @@ export async function POST(req: NextRequest) {
 
       const allBusy = [...calIntervals, ...otherTaskIntervals];
 
-      // Check if this task conflicts with any GCal event OR another pending task
+      // Check if this task conflicts with any GCal event OR another pending task,
+      // OR if it was scheduled in the past (never started — always needs rescheduling).
       const hasConflict = allBusy.some((iv) => overlaps(taskStart, taskEnd, iv.start, iv.end));
-      if (!hasConflict) continue;
+      const isPastDue   = taskStart < now;
+      if (!hasConflict && !isPastDue) continue;
 
       const { scheduled_start, scheduled_end } = fallbackSchedule(
         allBusy,

@@ -119,7 +119,7 @@ export default function Home() {
       setCalendarSyncError(false);
       await fetchBlocks();
 
-      // After syncing, reschedule any pending tasks that now conflict with calendar events
+      // After syncing, reschedule any pending tasks that conflict or are past-due
       const rescheduleRes = await fetch('/api/tasks/reschedule', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -128,10 +128,11 @@ export default function Home() {
       if (rescheduleRes.ok) {
         const { rescheduled } = await rescheduleRes.json() as { rescheduled: number };
         if (rescheduled > 0) {
-          await fetchTasks();
           showToast(`${rescheduled} task${rescheduled !== 1 ? 's' : ''} rescheduled to avoid calendar conflicts`);
         }
       }
+      // Always refresh task list after sync so the calendar reflects current scheduled times
+      await fetchTasks();
     } catch {
       // network error — ignore silently
     }
@@ -178,12 +179,16 @@ export default function Home() {
     }
   }, []);
 
+  // Initial load — runs once on mount (fetchTasks has stable identity; fetchBlocks
+  // captures today's selectedDate which is correct for the initial render)
   useEffect(() => {
     void fetchTasks();
     void fetchBlocks();
-  }, [fetchTasks, fetchBlocks]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Re-fetch blocks when selected date changes
+  // Re-fetch blocks whenever the viewed date changes (always pass the date explicitly
+  // so we never rely on a stale selectedDate closure)
   useEffect(() => {
     void fetchBlocks(selectedDate);
   // eslint-disable-next-line react-hooks/exhaustive-deps
