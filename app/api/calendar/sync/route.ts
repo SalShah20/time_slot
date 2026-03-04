@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
   // Load stored tokens
   const { data: tokenRow, error: tokenError } = await supabase
     .from('user_tokens')
-    .select('google_access_token, google_refresh_token, google_token_expiry')
+    .select('google_access_token, google_refresh_token, google_token_expiry, webhook_channel_id, webhook_expires_at')
     .eq('user_id', user.id)
     .single();
 
@@ -169,6 +169,33 @@ export async function POST(req: NextRequest) {
         .in('id', staleRowIds);
       if (staleErr) console.warn('[/api/calendar/sync] stale-delete error:', staleErr);
       else console.log('[/api/calendar/sync] Removed', staleRowIds.length, 'stale events');
+    }
+  }
+
+  // Renew the webhook channel if it expires within 48h
+  const renewThreshold = new Date(Date.now() + 48 * 60 * 60 * 1000);
+  if (!tokenRow.webhook_expires_at || new Date(tokenRow.webhook_expires_at) < renewThreshold) {
+    try {
+      const newChannelId = crypto.randomUUID();
+      const expiresMs = Date.now() + 6 * 24 * 60 * 60 * 1000;
+      const watchRes = await calendar.events.watch({
+        calendarId: 'primary',
+        requestBody: {
+          id:         newChannelId,
+          type:       'web_hook',
+          address:    `${process.env.NEXT_PUBLIC_APP_URL}/api/calendar/webhook`,
+          token:      user.id,
+          expiration: String(expiresMs),
+        },
+      });
+      await supabase.from('user_tokens').update({
+        webhook_channel_id:  newChannelId,
+        webhook_resource_id: watchRes.data.resourceId ?? null,
+        webhook_expires_at:  new Date(Number(watchRes.data.expiration ?? expiresMs)).toISOString(),
+      }).eq('user_id', user.id);
+      console.log('[/api/calendar/sync] Webhook channel renewed until', new Date(expiresMs).toISOString());
+    } catch (err) {
+      console.warn('[/api/calendar/sync] Channel renewal failed:', err);
     }
   }
 

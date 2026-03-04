@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createOAuthClient } from '@/lib/googleCalendar';
+import { createOAuthClient, getCalendarClient } from '@/lib/googleCalendar';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 
 export async function GET(req: NextRequest) {
@@ -40,6 +40,34 @@ export async function GET(req: NextRequest) {
 
     // Trigger an immediate sync in the background (fire-and-forget)
     fetch(`${appUrl}/api/calendar/sync`, { method: 'POST' }).catch(() => null);
+
+    // Register GCal push notification channel (non-fatal)
+    try {
+      const gcal = await getCalendarClient(supabase, user.id);
+      if (gcal) {
+        const channelId = crypto.randomUUID();
+        const expiresMs = Date.now() + 6 * 24 * 60 * 60 * 1000; // 6 days (< 7 day max)
+        const watchRes = await gcal.events.watch({
+          calendarId: 'primary',
+          requestBody: {
+            id:         channelId,
+            type:       'web_hook',
+            address:    `${appUrl}/api/calendar/webhook`,
+            token:      user.id,
+            expiration: String(expiresMs),
+          },
+        });
+        await supabase.from('user_tokens').update({
+          webhook_channel_id:  channelId,
+          webhook_resource_id: watchRes.data.resourceId ?? null,
+          webhook_expires_at:  new Date(Number(watchRes.data.expiration ?? expiresMs)).toISOString(),
+        }).eq('user_id', user.id);
+        console.log('[/api/calendar/callback] Webhook channel registered:', channelId);
+      }
+    } catch (err) {
+      console.warn('[/api/calendar/callback] Webhook registration failed:', err);
+      // Non-fatal — 5-min polling sync still works
+    }
 
     return NextResponse.redirect(`${appUrl}?calendar=connected`);
   } catch (err) {

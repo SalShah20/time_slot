@@ -121,6 +121,15 @@ export async function POST(req: NextRequest) {
           timezone,
         );
 
+        // If the best available slot is after the task's deadline, flag it instead of rescheduling
+        if (task.deadline && new Date(scheduled_start) > new Date(task.deadline)) {
+          await supabase.from('tasks')
+            .update({ needs_rescheduling: true })
+            .eq('id', task.id).eq('user_id', user.id);
+          console.warn(`[/api/tasks/reschedule] No slot before deadline for "${task.title}" — flagged`);
+          continue;
+        }
+
         // Delete old GCal event and create a new one with updated time
         let newEventId: string | null = null;
         if (calendar) {
@@ -145,7 +154,11 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        const updatePayload: Record<string, unknown> = { scheduled_start, scheduled_end };
+        const updatePayload: Record<string, unknown> = {
+          scheduled_start,
+          scheduled_end,
+          needs_rescheduling: false,
+        };
         if (newEventId) updatePayload.google_event_id = newEventId;
 
         const { error: updateError } = await supabase

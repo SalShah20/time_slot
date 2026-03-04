@@ -15,6 +15,16 @@ export function createSupabaseServer() {
   });
 }
 
+/** Service-role client — bypasses RLS. Use ONLY in webhook/server contexts with no user session. */
+export function createSupabaseAdmin() {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { createClient } = require('@supabase/supabase-js');
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  );
+}
+
 export async function getAuthUser() {
   const supabase = createSupabaseServer();
   const {

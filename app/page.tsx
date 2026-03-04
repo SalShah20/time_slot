@@ -583,6 +583,11 @@ export default function Home() {
                           <p className={`text-sm font-medium truncate ${isDone ? 'line-through text-surface-400' : 'text-surface-900'}`}>
                             {task.title}
                           </p>
+                          {task.needs_rescheduling && (
+                            <p className="text-xs font-medium text-amber-600 mt-0.5">
+                              ⚠ Can&apos;t fit before deadline — reschedule manually
+                            </p>
+                          )}
                           {task.scheduled_start && (
                             <p className="text-xs text-surface-500 mt-0.5">
                               {formatTime(task.scheduled_start)}

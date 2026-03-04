@@ -42,6 +42,7 @@ export interface TaskRow {
   scheduled_start: string | null;
   scheduled_end: string | null;
   status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  needs_rescheduling?: boolean;
   created_at: string;
   updated_at: string;
 }
