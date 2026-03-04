@@ -46,12 +46,17 @@ export function localTimeOnDay(date: Date, hour: number, minute: number, tz: str
   // Start from a naive UTC time and correct using the actual timezone offset at that moment.
   const naive = new Date(Date.UTC(y, m - 1, d + dayOffset, hour, minute, 0));
   const naiveLocalH = localHourIn(naive, tz);
-  const correction  = (naiveLocalH - (hour + minute / 60)) * 3_600_000;
+  // For timezones behind UTC (UTC-N), naiveLocalH > 12 because midnight UTC falls on the
+  // *previous* local day (e.g. UTC-5 sees 19h). Subtracting 24 gives the real offset
+  // (-5) so the correction adds hours forward rather than subtracting them backward.
+  const naiveLocalHNorm = naiveLocalH > 12 ? naiveLocalH - 24 : naiveLocalH;
+  const correction  = (naiveLocalHNorm - (hour + minute / 60)) * 3_600_000;
   const corrected   = new Date(naive.getTime() - correction);
   // One verification pass to handle DST edge cases
   const verifyH = localHourIn(corrected, tz);
   if (Math.abs(verifyH - (hour + minute / 60)) > 0.1) {
-    const correction2 = (verifyH - (hour + minute / 60)) * 3_600_000;
+    const verifyHNorm = verifyH > 12 ? verifyH - 24 : verifyH;
+    const correction2 = (verifyHNorm - (hour + minute / 60)) * 3_600_000;
     return new Date(corrected.getTime() - correction2);
   }
   return corrected;
