@@ -135,23 +135,14 @@ export async function POST(req: NextRequest) {
   const freshIds = rows.map((r) => r.google_event_id);
 
   if (rows.length > 0) {
-    // Step 1: clear existing entries for these specific event IDs (prevent duplicates)
-    const { error: delExistingError } = await supabase
+    const { error: upsertError } = await supabase
       .from('calendar_events')
-      .delete()
-      .eq('user_id', user.id)
-      .in('google_event_id', freshIds);
-    if (delExistingError) console.warn('[/api/calendar/sync] clear-existing error:', delExistingError);
-
-    // Step 2: insert fresh data
-    const { error: insertError } = await supabase
-      .from('calendar_events')
-      .insert(rows);
-    if (insertError) {
-      console.error('[/api/calendar/sync] insert error:', insertError);
+      .upsert(rows, { onConflict: 'user_id,google_event_id' });
+    if (upsertError) {
+      console.error('[/api/calendar/sync] upsert error:', upsertError);
       return NextResponse.json({ error: 'Failed to cache events' }, { status: 500 });
     }
-    console.log('[/api/calendar/sync] Insert succeeded');
+    console.log('[/api/calendar/sync] Upsert succeeded');
   }
 
   // Step 3: delete stale entries in the date range that Google no longer returned.
