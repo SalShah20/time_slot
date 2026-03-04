@@ -41,7 +41,7 @@ Client-side: `supabase.auth.getSession()` + `onAuthStateChange` in `app/page.tsx
 ### Page layout (`app/page.tsx`)
 
 Full-screen layout:
-1. **Header** — logo, Google Calendar status button (connect/sync/reconnect), "Start Timer" button, user avatar/menu
+1. **Header** — logo, Google Calendar status button (connect/sync/reconnect), beta "Feedback Form" link (amber, opens Google Form in new tab), "Start Timer" button, user avatar/menu
 2. **Stats bar** — `StatsCards` polls `/api/tasks/stats` every 30s
 3. **Two-column main** — left: upcoming task list with quick-complete checkmarks; right: `ScheduleView` (hourly calendar with task blocks and GCal event overlays)
 4. **FAB** (`+` button, bottom-right) — opens `TaskDrawer`
@@ -51,22 +51,40 @@ Floating overlays:
 - `TimerSelector` — modal task picker (opens from "Start Timer")
 - `CompletionPopup` — post-completion stats
 - `TaskDrawer` — slide-up drawer; **batch mode is the default** (resets to batch on every close)
+- `TaskEditModal` — edit title/deadline/duration/tag of an existing pending task; clicking any task in the sidebar opens it; saving calls `PATCH /api/tasks/[id]` and re-fetches tasks
 - `OnboardingTooltip` — first-visit tooltip (localStorage key `ts_onboarding_seen`; shown after 1.5s)
+
+### State management in `app/page.tsx`
+
+#### `fetchBlocks` — stable identity + AbortController
+`fetchBlocks` has an **empty `useCallback` dependency array** and reads the current date from a `selectedDateRef` ref (kept in sync via `useEffect`). This makes `fetchBlocks` identity-stable, which in turn stabilises `syncCalendar`, `handleManualSync`, and the 5-minute sync interval (they no longer restart on every date change).
+
+An **`AbortController`** (`fetchBlocksAbortRef`) is created on every `fetchBlocks` call and immediately aborts any previous in-flight request. This prevents stale responses from overwriting fresh data — the last call always wins.
+
+#### `blocksCache` — per-date calendar block cache
+`blocks` state was replaced with `blocksCache: Record<YYYY-MM-DD, CalendarBlock[]>`. The active `blocks` for the current date is derived as:
+```typescript
+const blocksDateKey = `${selectedDate.getFullYear()}-...`;
+const blocks = blocksCache[blocksDateKey] ?? [];
+```
+This means navigating back to a previously-visited date shows cached data instantly while the network refresh is in flight — no blank flash. `handleAddBlock` writes into the correct date's cache entry; `handleDeleteBlock` filters across all entries.
 
 ### LLM Auto-scheduling (`app/api/tasks/create/route.ts`, `lib/scheduleUtils.ts`)
 
 New tasks are scheduled via `scheduleWithLLM()`:
 1. Fetches existing tasks + Google Calendar events for today + tomorrow as context
-2. Calls GPT-4o-mini with a structured prompt (preferred 7am–11pm, last resort up to 3am, hard blackout 3am–7am, no overlaps, respect deadlines, start ≥10 min from now)
+2. Calls GPT-4o-mini with a structured prompt (preferred 8am–11pm, last resort up to 3am, hard blackout 3am–8am, no overlaps, respect deadlines, start ≥10 min from now)
 3. **Validates** the LLM result against `busyIntervals` — if the result overlaps anything, it falls back automatically
 4. Falls back to `fallbackSchedule()` (deterministic free-slot finder) if: API key missing, LLM errors, or overlap detected
 
 `fallbackSchedule()` in `lib/scheduleUtils.ts`: sorts busy intervals, walks forward from now+10min to find the first free gap. Scheduling window priority:
-1. **Preferred**: 7 AM – 11 PM
+1. **Preferred**: 8 AM – 11 PM
 2. **Last resort**: 11 PM – 3 AM (used only when earlier slots are fully booked, e.g. a packed day with an imminent deadline)
-3. **Hard blackout**: 3 AM – 7 AM (never scheduled)
+3. **Hard blackout**: 3 AM – 8 AM (never scheduled)
 
-Falls back to 7 AM the next day only when all slots through 3 AM are also unavailable.
+Falls back to 8 AM the next day only when all slots through 3 AM are also unavailable.
+
+Key constant: `WORK_START_HOUR = 8` in `lib/scheduleUtils.ts`. Both LLM prompts (`create` and `batch-create`) and the validation checks in `create/route.ts` all use 8 AM as the earliest allowed start.
 
 ### Batch Scheduling (`app/api/tasks/batch-create/route.ts`, `components/TaskDrawer.tsx`)
 
@@ -91,7 +109,7 @@ OAuth 2.0 via `googleapis`. Credentials in `google-calendar-mcp/gcp-oauth.keys.j
 - `GET /api/calendar/callback` — exchanges code for tokens, stores in `user_tokens`, triggers sync
 - `GET /api/calendar/status` — returns `{ connected: bool }`
 - `POST /api/calendar/sync` — fetches today+tomorrow events from Google, upserts `calendar_events`; auto-persists refreshed tokens
-- `GET /api/calendar/events` — returns cached `calendar_events` for today
+- `GET /api/calendar/events` — returns cached `calendar_events` for today (not used by the app directly; app uses `/api/blocks`)
 
 **GCal event lifecycle (full):**
 - **Create**: when a task is created, a GCal event is inserted and the returned `event.id` is stored in `tasks.google_event_id`
@@ -108,7 +126,12 @@ OAuth 2.0 via `googleapis`. Credentials in `google-calendar-mcp/gcp-oauth.keys.j
 
 ### Calendar blocks (`app/api/blocks/`, `components/ScheduleView.tsx`)
 
-Users can add manual busy blocks from `ScheduleView` (right panel). Stored in `calendar_blocks` table. Also mirrored to GCal if connected. Accepts `?date=YYYY-MM-DD` query param.
+Users can add manual busy blocks from `ScheduleView` (right panel). Stored in `calendar_blocks` table. Also mirrored to GCal if connected. Accepts `?date=YYYY-MM-DD&timezone=IANA_TZ` query params.
+
+**Deduplication logic in `GET /api/blocks`:**
+The endpoint merges two sources — `calendar_blocks` (manual) and `calendar_events` (synced GCal). To prevent double-rendering, it runs three parallel queries and applies two exclusion filters before returning:
+1. **Task-owned events**: fetches all `tasks.google_event_id` for the user and excludes any `calendar_event` whose `google_event_id` matches — these are already rendered as task blocks in `ScheduleView`.
+2. **Start-time collision**: excludes any GCal event whose start time exactly matches a manual block (legacy safety net for blocks mirrored to GCal before the `google_event_id` approach).
 
 ### Conflict rescheduling (`app/api/tasks/reschedule/route.ts`)
 
@@ -173,25 +196,29 @@ Use `teal-600` / `hover:teal-700` for primary buttons. Use `surface-*` for all n
 
 | File | Purpose |
 |------|---------|
-| `app/page.tsx` | Main dashboard, calendar sync loop, notification setup |
+| `app/page.tsx` | Main dashboard, calendar sync loop, notification setup, per-date blocks cache |
 | `app/login/page.tsx` | Google sign-in page |
 | `app/auth/callback/route.ts` | Supabase OAuth code exchange |
 | `middleware.ts` | Auth guard — redirects unauthenticated to `/login` |
 | `app/api/tasks/create/route.ts` | LLM scheduling + GCal event creation |
 | `app/api/tasks/batch-create/route.ts` | Batch scheduling (one LLM call for N tasks) |
 | `app/api/tasks/reschedule/route.ts` | Conflict detection + GCal event replace |
+| `app/api/tasks/[id]/route.ts` | `PATCH` — edit task fields + update GCal event |
 | `app/api/tasks/[id]/complete/route.ts` | Quick-complete (no timer) + GCal cleanup |
 | `app/api/timer/complete/route.ts` | Timer completion + GCal cleanup |
 | `app/api/calendar/sync/route.ts` | Fetch GCal events → cache in `calendar_events` |
+| `app/api/blocks/route.ts` | Merge manual blocks + GCal events; deduplicate task-owned events |
 | `lib/googleCalendar.ts` | OAuth client, `getCalendarClient()`, `deleteCalendarEvent()` |
-| `lib/scheduleUtils.ts` | `fallbackSchedule()` deterministic free-slot finder |
+| `lib/scheduleUtils.ts` | `fallbackSchedule()` deterministic free-slot finder; `WORK_START_HOUR = 8` |
 | `lib/timerService.ts` | localStorage timer state machine + 30s DB sync |
+| `lib/estimateDuration.ts` | `estimateDurationWithLLM()` — GPT-4o-mini duration estimate with tag-based fallback |
 | `lib/notifications.ts` | Browser notification helpers |
 | `lib/tagColors.ts` | Tag → color mapping |
 | `lib/supabase.ts` | Browser Supabase client singleton |
 | `lib/supabase-server.ts` | `createSupabaseServer()` + `getAuthUser()` for API routes |
 | `components/TaskDrawer.tsx` | Slide-up drawer with single/batch mode toggle |
 | `components/TaskForm.tsx` | Task creation form; supports `onQueue` prop for batch mode |
+| `components/TaskEditModal.tsx` | Modal to edit existing pending tasks |
 | `components/ScheduleView.tsx` | Hourly calendar grid with task blocks + GCal overlays |
 | `components/CornerTimerWidget.tsx` | Floating active timer display |
 | `components/TimerSelector.tsx` | Modal to pick which task to time |
@@ -214,6 +241,7 @@ Configured via `@ducanh2912/next-pwa` in `next.config.mjs`:
 - **Tab bar** (`md:hidden`) renders as part of the flex column (not fixed) at the bottom of the screen
 - **FAB** is `bottom-6 max-md:bottom-20` (no timer) or `bottom-52 max-md:bottom-[17rem]` (timer active) to clear tab bar
 - **CornerTimerWidget** is `bottom-6 max-md:bottom-20` and `w-72 max-md:w-[calc(100vw-3rem)]` on mobile
+- **Beta Feedback link** in header is `hidden sm:flex` — hidden on very small screens to keep the mobile header clean
 
 ## LLM duration estimation
 
@@ -223,9 +251,17 @@ Configured via `@ducanh2912/next-pwa` in `next.config.mjs`:
 - In `TaskForm.tsx` the first duration option is **"AI Estimate"** (value `-1`); when selected, `estimatedMinutes` is sent as `undefined` and the server estimates it
 - Queue list in `TaskDrawer` shows "AI estimate" label for tasks without a manual duration
 
+## Scheduling window
+
+- **Preferred**: 8 AM – 11 PM
+- **Last resort**: 11 PM – 3 AM (used only when earlier slots are all taken; college students work late)
+- **Hard blackout**: 3 AM – 8 AM (never scheduled)
+- `WORK_START_HOUR = 8` in `lib/scheduleUtils.ts` — single source of truth for the start boundary
+- Both LLM prompts (create and batch-create) say "preferred 8 AM–11 PM; last resort up to 3 AM; never 3 AM–8 AM"
+- `fallbackSchedule()` snaps any candidate in the 3–8 AM blackout forward to 8 AM via `snapToWorkHours()`
+- LLM validation in `create/route.ts` rejects starts/ends in 3–8 AM; rejects cross-day ends at 8 AM+; allows midnight–3 AM
+
 ## Planned / future work
 
-- **LLM duration estimation**: Call OpenAI when user submits without a manual duration; store with `llm_estimated = true`
 - **Smarter batch scheduling**: Let users reorder the batch queue before submitting to influence scheduling priority
-- **Task editing**: UI to edit title/deadline/duration of existing pending tasks (would need to update GCal event too)
 - **Vercel deployment**: Add all env vars to Vercel project settings
