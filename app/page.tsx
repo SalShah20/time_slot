@@ -95,7 +95,8 @@ export default function Home() {
     try {
       const d = date ?? selectedDate;
       const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      const res = await fetch(`/api/blocks?date=${dateStr}`);
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const res = await fetch(`/api/blocks?date=${dateStr}&timezone=${encodeURIComponent(timezone)}`);
       if (res.ok) setBlocks(await res.json());
     } catch (err) {
       console.error('[fetchBlocks]', err);

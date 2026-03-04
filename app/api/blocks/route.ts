@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 import { createOAuthClient } from '@/lib/googleCalendar';
+import { localTimeOnDay } from '@/lib/scheduleUtils';
 
 export async function GET(req: NextRequest) {
   const user = await getAuthUser();
@@ -9,17 +10,18 @@ export async function GET(req: NextRequest) {
 
   const supabase = createSupabaseServer();
 
-  // Accept optional ?date=YYYY-MM-DD; defaults to today
+  // Accept optional ?date=YYYY-MM-DD and ?timezone=IANA_TZ; defaults to today in UTC
   const dateParam = req.nextUrl.searchParams.get('date');
-  let base: Date;
-  if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
-    base = new Date(`${dateParam}T00:00:00`);
-  } else {
-    const now = new Date();
-    base = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  }
-  const startOfDay = new Date(base.getFullYear(), base.getMonth(), base.getDate()).toISOString();
-  const endOfDay   = new Date(base.getFullYear(), base.getMonth(), base.getDate() + 1).toISOString();
+  const timezone = req.nextUrl.searchParams.get('timezone') ?? 'UTC';
+
+  // Keep parsing timezone-safe by anchoring the input day at UTC midnight, then
+  // converting that day into local midnight in the user's timezone.
+  const base = (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam))
+    ? new Date(`${dateParam}T00:00:00.000Z`)
+    : new Date();
+
+  const startOfDay = localTimeOnDay(base, 0, 0, timezone, 0).toISOString();
+  const endOfDay   = localTimeOnDay(base, 0, 0, timezone, 1).toISOString();
 
   console.log('[GET /api/blocks] Query range:', { startOfDay, endOfDay, userId: user.id });
 
