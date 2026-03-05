@@ -136,28 +136,39 @@ export async function getOrCreateTimeSlotCalendar(
   }
 }
 
-/** Delete a GCal event by ID. Non-fatal — swallows errors.
- *  If deletion from `calendarId` fails (e.g. event lives in a different calendar),
- *  automatically retries with 'primary' so old events created before the dedicated
- *  TimeSlot calendar was set up are still cleaned up. */
+/**
+ * Delete a GCal event by ID. Non-fatal — swallows errors.
+ *
+ * Strategy:
+ *  1. Try the provided calendarId first (fastest path).
+ *  2. If that fails, enumerate ALL writable calendars the user has and try each one.
+ *     This handles the case where calendarId is stale / wrong (e.g. DB returned
+ *     'primary' but the event was created inside the dedicated 'TimeSlot' calendar).
+ */
 export async function deleteCalendarEvent(
   calendar: ReturnType<typeof google.calendar>,
   eventId: string,
   calendarId = 'primary',
 ): Promise<void> {
+  // Fast path: try the known calendar first
   try {
     await calendar.events.delete({ calendarId, eventId });
     console.log('[deleteCalendarEvent] deleted', eventId, 'from', calendarId);
     return;
-  } catch (err) {
-    // If the specified calendar didn't have it, try 'primary' as a fallback
-    if (calendarId !== 'primary') {
+  } catch { /* fall through to exhaustive search */ }
+
+  // Slow path: enumerate all writable calendars and try each one
+  try {
+    const list = await calendar.calendarList.list({ minAccessRole: 'writer' });
+    for (const cal of list.data.items ?? []) {
+      if (!cal.id || cal.id === calendarId) continue; // already tried this one
       try {
-        await calendar.events.delete({ calendarId: 'primary', eventId });
-        console.log('[deleteCalendarEvent] deleted', eventId, 'from primary (fallback)');
+        await calendar.events.delete({ calendarId: cal.id, eventId });
+        console.log('[deleteCalendarEvent] deleted', eventId, 'from', cal.id, '(exhaustive search)');
         return;
-      } catch { /* not there either — truly gone or no permission */ }
+      } catch { /* not in this calendar either */ }
     }
-    console.warn('[deleteCalendarEvent] failed to delete', eventId, err);
-  }
+  } catch { /* can't list calendars */ }
+
+  console.warn('[deleteCalendarEvent] event', eventId, 'not found in any calendar — may already be deleted');
 }
