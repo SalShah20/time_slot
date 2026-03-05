@@ -103,8 +103,20 @@ export function fallbackSchedule(
   const now    = new Date();
   const sorted = [...busyIntervals].sort((a, b) => a.start.getTime() - b.start.getTime());
 
-  // Start within valid hours, at least 10 minutes from now.
-  let candidate = snapToWorkHours(new Date(now.getTime() + 10 * 60_000), timezone);
+  // If deadline is more than 5 days away, start from tomorrow 8 AM instead of ASAP —
+  // there's no urgency to schedule it immediately.
+  const DAYS_UNTIL_DEFER = 5;
+  const fiveDaysFromNow = new Date(now.getTime() + DAYS_UNTIL_DEFER * 24 * 60 * 60_000);
+  const useDeferredStart = deadline && new Date(deadline) > fiveDaysFromNow;
+
+  // Start within valid hours: at least 1 hour from now (give user time to prepare).
+  // For far-deadline tasks, prefer tomorrow 8 AM so they don't clutter today's schedule.
+  let candidate: Date;
+  if (useDeferredStart) {
+    candidate = localTimeOnDay(now, WORK_START_HOUR, 0, timezone, 1); // tomorrow 8 AM
+  } else {
+    candidate = snapToWorkHours(new Date(now.getTime() + 60 * 60_000), timezone);
+  }
 
   console.log(
     `[fallbackSchedule] TZ=${timezone} | start candidate=${candidate.toISOString()} (local ${localHourIn(candidate, timezone).toFixed(1)}h)`
@@ -133,10 +145,10 @@ export function fallbackSchedule(
       continue;
     }
 
-    // Push past any busy interval that overlaps [candidate, end)
+    // Push past any busy interval that overlaps [candidate, end), adding a 15-min buffer
     for (const iv of sorted) {
       if (iv.start < end && iv.end > candidate) {
-        candidate = snapToWorkHours(iv.end, timezone); // re-snap after each push
+        candidate = snapToWorkHours(new Date(iv.end.getTime() + 15 * 60_000), timezone);
         changed   = true;
         break;
       }

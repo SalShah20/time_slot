@@ -258,18 +258,23 @@ export default function TaskForm({ onTaskCreated, onTasksCreated, hideHeader = f
               <>
                 <span className="self-center text-surface-300 text-xs select-none">·</span>
                 {customTags.map((s) => {
+                  const color = getTagColor(s);
                   const isActive = tag === s;
                   return (
                     <button
                       key={s}
                       type="button"
                       onMouseDown={() => setTag(s)}
-                      className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
                         isActive
-                          ? 'border-teal-500 bg-teal-50 text-teal-800'
+                          ? `${color.bg} ${color.text} ${color.border} border`
                           : 'border-surface-200 text-surface-600 hover:border-surface-300 hover:bg-surface-50'
                       }`}
                     >
+                      <span
+                        className="w-2 h-2 rounded-full flex-shrink-0"
+                        style={{ backgroundColor: color.hex }}
+                      />
                       {s}
                     </button>
                   );
@@ -277,6 +282,11 @@ export default function TaskForm({ onTaskCreated, onTasksCreated, hideHeader = f
               </>
             )}
           </div>
+          {!tag && (
+            <p className="text-xs text-teal-600 mt-1">
+              AI will guess a tag from your title if left blank
+            </p>
+          )}
         </div>
 
         {/* Estimated Duration */}

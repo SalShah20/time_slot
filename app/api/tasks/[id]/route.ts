@@ -126,12 +126,29 @@ export async function DELETE(
     return NextResponse.json({ error: 'Task not found' }, { status: 404 });
   }
 
-  if (task.google_event_id) {
+  // Collect all GCal event IDs to delete: this task + any split-session children
+  // (DB cascade will delete the child rows, but won't touch GCal events)
+  const gcalEventIds: string[] = [];
+  if (task.google_event_id) gcalEventIds.push(task.google_event_id as string);
+
+  const { data: children } = await supabase
+    .from('tasks')
+    .select('google_event_id')
+    .eq('parent_task_id', taskId)
+    .eq('user_id', user.id);
+
+  for (const child of children ?? []) {
+    if (child.google_event_id) gcalEventIds.push(child.google_event_id as string);
+  }
+
+  if (gcalEventIds.length > 0) {
     const [calendar, calId] = await Promise.all([
       getCalendarClient(supabase, user.id),
       getTimeSlotCalendarId(supabase, user.id),
     ]);
-    if (calendar) await deleteCalendarEvent(calendar, task.google_event_id as string, calId);
+    if (calendar) {
+      await Promise.all(gcalEventIds.map((eid) => deleteCalendarEvent(calendar, eid, calId)));
+    }
   }
 
   const { error } = await supabase

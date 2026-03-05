@@ -7,6 +7,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { estimateDurationWithLLM } from '@/lib/estimateDuration';
 import { fetchUserTimingHistory } from '@/lib/timingHistory';
 import { computeSplitSessions } from '@/lib/splitSchedule';
+import { guessTagWithLLM } from '@/lib/guessTag';
 
 /** LLM-powered smart scheduler using GPT-4o-mini. Falls back to simple scheduling on any error. */
 async function scheduleWithLLM(
@@ -88,12 +89,13 @@ RULES:
 2. Task end time MUST be before or at deadline
 3. If deadline is today, schedule ASAP — do not push to tomorrow
 4. Avoid overlapping existing tasks and calendar events
-5. Start at least 10 minutes from NOW to give the user time to prepare
+5. Start at least 1 hour from NOW — never schedule something starting in the next 60 minutes
 6. If there is no estimated duration, estimate based on the task name, description, similar tasks, and tags
-7. If multiple valid slots, pick the earliest one
-8. The earlier the deadline, the earlier the task should be scheduled.
-9. Give the user at least 15 minutes breaks in between tasks to avoid burnout
-10. For longer tasks with later due dates, it is ok to break them up into multiple sessions (ie. research papers, studying for a hard exam,...)
+7. If multiple valid slots, pick the earliest valid one
+8. The earlier the deadline, the earlier the task should be scheduled
+9. Always leave at least 15 minutes of buffer between tasks
+10. If the deadline is 5 or more days away, do NOT schedule today — prefer tomorrow or later
+11. For longer tasks with later due dates, it is ok to break them up into multiple sessions (ie. research papers, studying for a hard exam,...)
 
 Respond ONLY with this JSON (no extra text):
 {"scheduled_start":"ISO 8601 timestamp","reasoning":"one sentence"}`;
@@ -212,9 +214,12 @@ export async function POST(req: NextRequest) {
 
   const supabase = createSupabaseServer();
 
+  // If no tag supplied, guess it from the title/description
+  const finalTag = tag ?? await guessTagWithLLM(title, description);
+
   // If no duration supplied, ask the LLM to estimate it (using the user's own history to calibrate)
   const finalEstimatedMinutes = estimatedMinutes || await estimateDurationWithLLM(
-    title, description, tag, priority,
+    title, description, finalTag, priority,
     await fetchUserTimingHistory(supabase, user.id),
   );
 
@@ -225,7 +230,7 @@ export async function POST(req: NextRequest) {
   } = await scheduleWithLLM(
     supabase,
     user.id,
-    { title, description, estimatedMinutes: finalEstimatedMinutes, tag, deadline, priority },
+    { title, description, estimatedMinutes: finalEstimatedMinutes, tag: finalTag ?? undefined, deadline, priority },
     timezone,
   );
 
@@ -263,7 +268,7 @@ export async function POST(req: NextRequest) {
     user_id:           user.id,
     title,
     description:       description ?? null,
-    tag:               tag ?? null,
+    tag:               finalTag ?? null,
     estimated_minutes: finalEstimatedMinutes,
     priority:          priority ?? null,
     deadline:          deadline ?? null,
@@ -280,7 +285,7 @@ export async function POST(req: NextRequest) {
 
   if (shouldSplit) {
     const sessions = await computeSplitSessions(
-      { title, estimatedMinutes: finalEstimatedMinutes, deadline, priority, tag },
+      { title, estimatedMinutes: finalEstimatedMinutes, deadline, priority, tag: finalTag },
       initialBusy,
       new Date(deadline),
       timezone,

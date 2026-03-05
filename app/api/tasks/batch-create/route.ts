@@ -6,6 +6,7 @@ import type { BusyInterval } from '@/lib/scheduleUtils';
 import { estimateDurationWithLLM } from '@/lib/estimateDuration';
 import { fetchUserTimingHistory } from '@/lib/timingHistory';
 import { computeSplitSessions } from '@/lib/splitSchedule';
+import { guessTagWithLLM } from '@/lib/guessTag';
 import type { SplitSession } from '@/lib/splitSchedule';
 
 interface TaskInput {
@@ -139,8 +140,10 @@ RULES:
 2. Each task's end time MUST be before or at its deadline
 3. Tasks due sooner should generally be scheduled sooner
 4. No overlaps between tasks being scheduled, or with existing busy intervals
-5. Start at least 10 minutes from NOW
-6. If multiple valid slots for a task, pick the earliest one
+5. Start at least 1 hour from NOW — never schedule something starting in the next 60 minutes
+6. Always leave at least 15 minutes of buffer between tasks
+7. If multiple valid slots for a task, pick the earliest valid one
+8. If the deadline is 5 or more days away, do NOT schedule today — prefer tomorrow or later
 
 Respond ONLY with a JSON array (no extra text):
 [{"index":0,"scheduled_start":"ISO 8601 timestamp"},{"index":1,"scheduled_start":"ISO 8601 timestamp"}]`;
@@ -309,12 +312,14 @@ export async function POST(req: NextRequest) {
   // Fetch timing history once — shared across all duration estimates in this batch
   const history = await fetchUserTimingHistory(supabase, user.id);
 
-  // Fill in missing durations via LLM (parallel to keep batch fast)
+  // Fill in missing tags and durations via LLM (parallel to keep batch fast)
   const tasksWithDurations = await Promise.all(
     tasks.map(async (t) => {
-      if (t.estimatedMinutes) return t;
-      const estimated = await estimateDurationWithLLM(t.title, t.description, t.tag, t.priority, history);
-      return { ...t, estimatedMinutes: estimated };
+      const finalTag = t.tag ?? await guessTagWithLLM(t.title, t.description);
+      const estimated = t.estimatedMinutes
+        ? t.estimatedMinutes
+        : await estimateDurationWithLLM(t.title, t.description, finalTag, t.priority, history);
+      return { ...t, tag: finalTag ?? t.tag, estimatedMinutes: estimated };
     }),
   );
   const now        = new Date();
