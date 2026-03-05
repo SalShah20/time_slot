@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 import { getCalendarClient, deleteCalendarEvent, getTimeSlotCalendarId, getPriorityColorId } from '@/lib/googleCalendar';
+import { fallbackSchedule } from '@/lib/scheduleUtils';
+import type { BusyInterval } from '@/lib/scheduleUtils';
 
 export async function PATCH(
   req: NextRequest,
@@ -58,6 +60,63 @@ export async function PATCH(
     update.scheduled_end = new Date(
       new Date(existing.scheduled_start as string).getTime() + newMinutes * 60_000,
     ).toISOString();
+  }
+
+  // ── Deadline-driven reschedule ───────────────────────────────────────────────
+  // If a deadline was added/changed and the user didn't manually pick a start time,
+  // check whether the current scheduled slot misses the deadline and reschedule if so.
+  const newDeadline   = body.deadline ? new Date(body.deadline) : null;
+  const currentEnd    = (update.scheduled_end as string | undefined) ?? (existing.scheduled_end as string | null);
+  const needsReschedule =
+    body.deadline !== undefined &&   // deadline field was explicitly sent
+    !body.scheduledStart &&          // user didn't also manually set a start time
+    newDeadline &&
+    currentEnd &&
+    new Date(currentEnd) > newDeadline;
+
+  if (needsReschedule) {
+    const timezone = body.timezone ?? 'UTC';
+    const now = new Date();
+    const twoDaysOut = new Date(now.getTime() + 2 * 24 * 60 * 60_000);
+
+    // Fetch other pending tasks + calendar events as busy intervals
+    const [{ data: otherTasks }, { data: calEvents }] = await Promise.all([
+      supabase
+        .from('tasks')
+        .select('scheduled_start, scheduled_end, estimated_minutes')
+        .eq('user_id', user.id)
+        .neq('id', taskId)
+        .not('status', 'in', '("completed","cancelled")')
+        .gte('scheduled_start', now.toISOString())
+        .lt('scheduled_start', twoDaysOut.toISOString()),
+      supabase
+        .from('calendar_events')
+        .select('start_time, end_time')
+        .eq('user_id', user.id)
+        .gte('start_time', now.toISOString())
+        .lt('start_time', twoDaysOut.toISOString()),
+    ]);
+
+    const busyIntervals: BusyInterval[] = [
+      ...(otherTasks ?? [])
+        .filter((t) => t.scheduled_start)
+        .map((t) => ({
+          start: new Date(t.scheduled_start!),
+          end: t.scheduled_end
+            ? new Date(t.scheduled_end)
+            : new Date(new Date(t.scheduled_start!).getTime() + (t.estimated_minutes ?? 30) * 60_000),
+        })),
+      ...(calEvents ?? []).map((e) => ({
+        start: new Date(e.start_time),
+        end: new Date(e.end_time),
+      })),
+    ];
+
+    const slot = fallbackSchedule(busyIntervals, newMinutes, body.deadline, timezone);
+    update.scheduled_start = slot.scheduled_start;
+    update.scheduled_end   = slot.scheduled_end;
+    update.needs_rescheduling = new Date(slot.scheduled_end) > newDeadline ? true : false;
+    console.log(`[PATCH /api/tasks/[id]] Rescheduled "${existing.title as string}" to fit deadline: ${slot.scheduled_start}`);
   }
 
   // Sync GCal event whenever one exists — patch in-place so the event ID stays stable
