@@ -81,6 +81,7 @@ export default function TaskEditModal({ task, onClose, onSave }: Props) {
 
     setError(null);
     setConfirmDelete(false);
+    setDeleting(false);
   }, [task]);
 
   // Close on Escape

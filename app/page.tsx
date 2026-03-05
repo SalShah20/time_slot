@@ -182,11 +182,26 @@ export default function Home() {
     }
   }, [calendarConnected, syncCalendar]);
 
-  // Re-sync every 5 minutes while calendar is connected
+  // Re-sync every 2 minutes while calendar is connected
   useEffect(() => {
     if (!calendarConnected) return;
-    const id = setInterval(() => void syncCalendar(), 5 * 60_000);
+    const id = setInterval(() => void syncCalendar(), 2 * 60_000);
     return () => clearInterval(id);
+  }, [calendarConnected, syncCalendar]);
+
+  // Re-sync immediately when the tab becomes visible again — catches GCal changes
+  // made while the app was backgrounded (e.g. meeting added on phone/desktop).
+  useEffect(() => {
+    if (!calendarConnected) return;
+    const lastSyncRef = { t: Date.now() };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastSyncRef.t > 60_000) {
+        lastSyncRef.t = Date.now();
+        void syncCalendar();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   }, [calendarConnected, syncCalendar]);
 
   // ── Timer poll ──────────────────────────────────────────────────────────────
