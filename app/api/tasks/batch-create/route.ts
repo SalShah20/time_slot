@@ -51,10 +51,11 @@ async function applyBatchSplitting(
   const now     = new Date();
 
   for (const task of llmScheduled) {
-    const deadline     = task.deadline ? new Date(task.deadline) : null;
-    const missesDeadline = deadline && new Date(task.scheduled_end) > deadline && deadline > now;
+    const deadline       = task.deadline ? new Date(task.deadline) : null;
+    // Split any task > 60 min with a future deadline — spreads work across the window
+    const shouldSplitTask = deadline && deadline > now && task.estimatedMinutes > 60;
 
-    if (missesDeadline) {
+    if (shouldSplitTask) {
       // Do NOT add the discarded LLM slot to allBusy — let computeSplitSessions use
       // the current allBusy which doesn't include this task's failed slot.
       const sessions = await computeSplitSessions(

@@ -277,11 +277,12 @@ export async function POST(req: NextRequest) {
   };
 
   // ── Split trigger ───────────────────────────────────────────────────────────
-  // Attempt splitting only when a deadline exists and the best single slot misses it.
+  // Split any task > 60 min that has a future deadline — encourages breaks and
+  // spreads long tasks across the available window instead of one marathon session.
   const shouldSplit =
     deadline &&
-    new Date(finalScheduledEnd) > new Date(deadline) &&
-    new Date(deadline) > new Date();
+    new Date(deadline) > new Date() &&
+    finalEstimatedMinutes > 60;
 
   if (shouldSplit) {
     const sessions = await computeSplitSessions(

@@ -136,7 +136,10 @@ export async function getOrCreateTimeSlotCalendar(
   }
 }
 
-/** Delete a GCal event by ID. Non-fatal — swallows errors. */
+/** Delete a GCal event by ID. Non-fatal — swallows errors.
+ *  If deletion from `calendarId` fails (e.g. event lives in a different calendar),
+ *  automatically retries with 'primary' so old events created before the dedicated
+ *  TimeSlot calendar was set up are still cleaned up. */
 export async function deleteCalendarEvent(
   calendar: ReturnType<typeof google.calendar>,
   eventId: string,
@@ -145,7 +148,16 @@ export async function deleteCalendarEvent(
   try {
     await calendar.events.delete({ calendarId, eventId });
     console.log('[deleteCalendarEvent] deleted', eventId, 'from', calendarId);
+    return;
   } catch (err) {
+    // If the specified calendar didn't have it, try 'primary' as a fallback
+    if (calendarId !== 'primary') {
+      try {
+        await calendar.events.delete({ calendarId: 'primary', eventId });
+        console.log('[deleteCalendarEvent] deleted', eventId, 'from primary (fallback)');
+        return;
+      } catch { /* not there either — truly gone or no permission */ }
+    }
     console.warn('[deleteCalendarEvent] failed to delete', eventId, err);
   }
 }

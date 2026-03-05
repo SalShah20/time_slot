@@ -63,15 +63,20 @@ export async function PATCH(
   }
 
   // ── Deadline-driven reschedule ───────────────────────────────────────────────
-  // If a deadline was added/changed and the user didn't manually pick a start time,
+  // If a deadline was added/changed and the user didn't manually move the start time,
   // check whether the current scheduled slot misses the deadline and reschedule if so.
-  const newDeadline   = body.deadline ? new Date(body.deadline) : null;
-  const currentEnd    = (update.scheduled_end as string | undefined) ?? (existing.scheduled_end as string | null);
+  const newDeadline = body.deadline ? new Date(body.deadline) : null;
+  const currentEnd  = (update.scheduled_end as string | undefined) ?? (existing.scheduled_end as string | null);
+  // The edit modal always echoes back the existing scheduledStart — only treat it as a
+  // manual move if the value actually differs from what's already stored.
+  const userMovedStart =
+    body.scheduledStart !== undefined &&
+    body.scheduledStart !== (existing.scheduled_start as string | null);
   const needsReschedule =
-    body.deadline !== undefined &&   // deadline field was explicitly sent
-    !body.scheduledStart &&          // user didn't also manually set a start time
-    newDeadline &&
-    currentEnd &&
+    body.deadline !== undefined &&  // deadline field was explicitly sent
+    !userMovedStart &&              // user didn't manually reposition the task
+    newDeadline !== null &&
+    currentEnd !== null &&
     new Date(currentEnd) > newDeadline;
 
   if (needsReschedule) {
