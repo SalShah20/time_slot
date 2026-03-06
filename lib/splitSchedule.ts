@@ -6,7 +6,7 @@ const MIN_SESSION_MINUTES = 30;
 /** Maximum length of a single work session — caps any one sitting at 90 min. */
 const MAX_SESSION_MINUTES = 90;
 /** Enforced gap between consecutive sessions. */
-const BUFFER_MINUTES = 15;
+const BUFFER_MINUTES = 30;
 /** Last hour sessions may START (11 PM). Avoids late-night scheduling for splits. */
 const PREFERRED_END_HOUR = 23;
 
@@ -76,7 +76,7 @@ RULES:
 2. Sessions must sum to exactly ${task.estimatedMinutes} min total
 3. Each session must fit entirely within one available free block
 4. All sessions must end before the deadline: ${task.deadline}
-5. Leave at least ${BUFFER_MINUTES} minutes between any two sessions
+5. Leave at least ${BUFFER_MINUTES} minutes of break between any two sessions (this is important — sessions that are only 15 min apart are effectively back-to-back and are NOT acceptable)
 6. SPREAD sessions across the full time window before the deadline — do NOT schedule all sessions on the first day; distribute them evenly
 7. Prefer sessions between 8 AM and 11 PM — never schedule a session that starts in the 3 AM–8 AM range
 8. ${task.priority === 'high' ? 'Front-load sessions (schedule earlier slots first)' : 'Spread evenly across the entire window until deadline'}
@@ -134,6 +134,17 @@ Reply ONLY with a JSON object (no text before or after):
       const gapMs = new Date(sorted[i].start).getTime() - new Date(sorted[i - 1].end).getTime();
       if (gapMs < BUFFER_MINUTES * 60_000) {
         throw new Error(`Sessions ${i - 1} and ${i} have less than ${BUFFER_MINUTES} min gap`);
+      }
+    }
+
+    // Validate: each session must fit within one of the provided free blocks.
+    // This prevents the LLM from hallucinating late-night slots that aren't in the list.
+    for (const s of sessions) {
+      const sStart = new Date(s.start);
+      const sEnd   = new Date(s.end);
+      const fitsInBlock = freeBlocks.some((b) => b.start <= sStart && b.end >= sEnd);
+      if (!fitsInBlock) {
+        throw new Error(`Session [${s.start} – ${s.end}] falls outside all provided free blocks`);
       }
     }
 
