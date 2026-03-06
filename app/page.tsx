@@ -333,6 +333,27 @@ export default function Home() {
     }
   }, []);
 
+  const handleAddManyBlocks = useCallback(async (blocks: Array<{ title: string; start_time: string; end_time: string }>) => {
+    const res = await fetch('/api/blocks/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ blocks }),
+    });
+    if (!res.ok) throw new Error('Failed to add blocks');
+    const { blocks: newBlocks } = await res.json() as { blocks: CalendarBlock[] };
+    setBlocksCache((prev) => {
+      const next = { ...prev };
+      for (const b of newBlocks) {
+        const d = new Date(b.start_time);
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        next[key] = [...(next[key] ?? []), b].sort(
+          (a, c) => new Date(a.start_time).getTime() - new Date(c.start_time).getTime()
+        );
+      }
+      return next;
+    });
+  }, []);
+
   const handleDeleteBlock = useCallback(async (id: string) => {
     const res = await fetch(`/api/blocks/${id}`, { method: 'DELETE' });
     if (res.ok) {
@@ -659,6 +680,7 @@ export default function Home() {
             selectedDate={selectedDate}
             onDateChange={setSelectedDate}
             onAddBlock={handleAddBlock}
+            onAddManyBlocks={handleAddManyBlocks}
             onDeleteBlock={handleDeleteBlock}
             onEditTask={setEditingTask}
           />
@@ -692,7 +714,7 @@ export default function Home() {
       <TaskEditModal
         task={editingTask}
         onClose={() => setEditingTask(null)}
-        onSave={() => { setEditingTask(null); void fetchTasks(); }}
+        onSave={() => { setEditingTask(null); void fetchTasks(); void fetchBlocks(); }}
       />
 
       {/* ── Toast ─────────────────────────────────────────────────────────── */}

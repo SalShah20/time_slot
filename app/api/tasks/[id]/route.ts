@@ -213,6 +213,13 @@ export async function DELETE(
     if (calendar) {
       await Promise.all(gcalEventIds.map((eid) => deleteCalendarEvent(calendar, eid, calId)));
     }
+    // Also remove any matching entries from the local calendar_events cache so the
+    // schedule view reflects the deletion immediately without waiting for the next sync.
+    await supabase
+      .from('calendar_events')
+      .delete()
+      .eq('user_id', user.id)
+      .in('google_event_id', gcalEventIds);
   }
 
   const { error } = await supabase

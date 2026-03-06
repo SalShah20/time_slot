@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import TaskForm, { type TaskInput } from '@/components/TaskForm';
 import BrainDumpInput from '@/components/BrainDumpInput';
+// import VoiceTaskAgent from '@/components/VoiceTaskAgent'; // TODO: implement voice agent later
 import type { TaskRow } from '@/types/timer';
 
 interface Props {
@@ -17,7 +18,7 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
   // batchMode = false → quick add (immediate scheduling, one task)
   const [batchMode, setBatchMode]         = useState(true);
   // inputMode only applies in batch mode
-  const [inputMode, setInputMode]         = useState<'braindump' | 'detailed'>('braindump');
+  const [inputMode, setInputMode]         = useState<'braindump' | 'detailed' | 'voice'>('braindump');
   const [queue, setQueue]                 = useState<TaskInput[]>([]);
   const [submitting, setSubmitting]       = useState(false);
   const [batchError, setBatchError]       = useState<string | null>(null);
@@ -167,6 +168,21 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
                   </svg>
                   Form
                 </button>
+                <button
+                  onClick={() => setInputMode('voice')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                    inputMode === 'voice'
+                      ? 'bg-white text-teal-700 shadow-sm'
+                      : 'text-surface-500 hover:text-surface-700'
+                  }`}
+                  title="Speak your tasks — AI adds them to the queue"
+                >
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 1a4 4 0 00-4 4v7a4 4 0 008 0V5a4 4 0 00-4-4z" />
+                    <path d="M19 11a7 7 0 01-14 0H3a9 9 0 008 8.94V22h2v-2.06A9 9 0 0021 11h-2z" />
+                  </svg>
+                  Voice
+                </button>
               </div>
             )}
 
@@ -228,6 +244,9 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
                   onSwitchToForm={() => setInputMode('detailed')}
                 />
               </div>
+            ) : inputMode === 'voice' ? (
+              // TODO: VoiceTaskAgent — implement later
+              <div className="px-5 py-8 text-center text-surface-500 text-sm">Voice input coming soon.</div>
             ) : (
               <TaskForm
                 onTaskCreated={handleTaskCreated}

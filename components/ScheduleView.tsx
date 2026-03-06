@@ -65,6 +65,7 @@ interface Props {
   selectedDate?: Date;
   onDateChange?: (date: Date) => void;
   onAddBlock: (block: { title: string; start_time: string; end_time: string }) => Promise<void>;
+  onAddManyBlocks?: (blocks: Array<{ title: string; start_time: string; end_time: string }>) => Promise<void>;
   onDeleteBlock: (id: string) => Promise<void>;
   onEditTask?: (task: TaskRow) => void;
 }
@@ -207,6 +208,7 @@ export default function ScheduleView({
   selectedDate: selectedDateProp,
   onDateChange,
   onAddBlock,
+  onAddManyBlocks,
   onDeleteBlock,
   onEditTask,
 }: Props) {
@@ -579,7 +581,9 @@ export default function ScheduleView({
 
       {showAddBlock && (
         <AddBlockModal
+          selectedDate={selectedDate}
           onAdd={onAddBlock}
+          onAddMany={onAddManyBlocks}
           onClose={() => setShowAddBlock(false)}
         />
       )}

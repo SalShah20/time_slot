@@ -44,6 +44,12 @@ export async function POST(
     } catch (err) {
       console.warn('[POST /api/tasks/[id]/complete] GCal cleanup failed:', err);
     }
+    // Remove from local cache so ScheduleView reflects the change immediately
+    await supabase
+      .from('calendar_events')
+      .delete()
+      .eq('user_id', user.id)
+      .eq('google_event_id', googleEventId);
   }
 
   return NextResponse.json(data);
