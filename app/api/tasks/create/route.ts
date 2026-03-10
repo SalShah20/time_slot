@@ -195,6 +195,8 @@ export async function POST(req: NextRequest) {
     priority,
     deadline,
     timezone = 'UTC',
+    isFixed = false,
+    fixedStart,
   } = await req.json() as {
     title: string;
     description?: string;
@@ -203,6 +205,8 @@ export async function POST(req: NextRequest) {
     priority?: string;
     deadline?: string;
     timezone?: string;
+    isFixed?: boolean;
+    fixedStart?: string;
   };
 
   if (!title) {
@@ -223,48 +227,57 @@ export async function POST(req: NextRequest) {
     await fetchUserTimingHistory(supabase, user.id),
   );
 
-  const {
-    scheduled_start: scheduledStart,
-    scheduled_end: scheduledEnd,
-    busyIntervals: initialBusy,
-  } = await scheduleWithLLM(
-    supabase,
-    user.id,
-    { title, description, estimatedMinutes: finalEstimatedMinutes, tag: finalTag ?? undefined, deadline, priority },
-    timezone,
-  );
+  // ── Fixed-time fast path ────────────────────────────────────────────────────
+  // Fixed tasks skip LLM scheduling, conflict checks, and splitting entirely.
+  let finalScheduledStart: string;
+  let finalScheduledEnd: string;
+  let initialBusy: BusyInterval[] = [];
 
-  // If the task landed beyond tomorrow, fetch live GCal events for that day and
-  // re-schedule if the slot conflicts with an event not yet in our DB cache.
-  let finalScheduledStart = scheduledStart;
-  let finalScheduledEnd   = scheduledEnd;
-  try {
-    const scheduledDay = localDateStrIn(new Date(scheduledStart), timezone);
-    const tomorrowDate = new Date();
-    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-    const tomorrowDay  = localDateStrIn(tomorrowDate, timezone);
+  if (isFixed && fixedStart) {
+    finalScheduledStart = new Date(fixedStart).toISOString();
+    finalScheduledEnd   = new Date(new Date(fixedStart).getTime() + finalEstimatedMinutes * 60_000).toISOString();
+    console.log(`[/api/tasks/create] Fixed task "${title}" pinned to ${finalScheduledStart}`);
+  } else {
+    const result = await scheduleWithLLM(
+      supabase,
+      user.id,
+      { title, description, estimatedMinutes: finalEstimatedMinutes, tag: finalTag ?? undefined, deadline, priority },
+      timezone,
+    );
+    finalScheduledStart = result.scheduled_start;
+    finalScheduledEnd   = result.scheduled_end;
+    initialBusy         = result.busyIntervals;
 
-    if (scheduledDay > tomorrowDay) {
-      const calCheck = await getCalendarClient(supabase, user.id);
-      if (calCheck) {
-        const liveEvents = await fetchCalendarEventsForDay(calCheck, new Date(scheduledStart), timezone);
-        const sStart = new Date(scheduledStart);
-        const sEnd   = new Date(scheduledEnd);
-        const hasOverlap = liveEvents.some((e) => e.start < sEnd && e.end > sStart);
-        if (hasOverlap) {
-          console.warn(`[/api/tasks/create] Slot on ${scheduledDay} conflicts with a live GCal event — rescheduling`);
-          const augmented = [...initialBusy, ...liveEvents];
-          const fb = fallbackSchedule(augmented, finalEstimatedMinutes, deadline, timezone);
-          finalScheduledStart = fb.scheduled_start;
-          finalScheduledEnd   = fb.scheduled_end;
+    // If the task landed beyond tomorrow, fetch live GCal events for that day and
+    // re-schedule if the slot conflicts with an event not yet in our DB cache.
+    try {
+      const scheduledDay = localDateStrIn(new Date(finalScheduledStart), timezone);
+      const tomorrowDate = new Date();
+      tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+      const tomorrowDay  = localDateStrIn(tomorrowDate, timezone);
+
+      if (scheduledDay > tomorrowDay) {
+        const calCheck = await getCalendarClient(supabase, user.id);
+        if (calCheck) {
+          const liveEvents = await fetchCalendarEventsForDay(calCheck, new Date(finalScheduledStart), timezone);
+          const sStart = new Date(finalScheduledStart);
+          const sEnd   = new Date(finalScheduledEnd);
+          const hasOverlap = liveEvents.some((e) => e.start < sEnd && e.end > sStart);
+          if (hasOverlap) {
+            console.warn(`[/api/tasks/create] Slot on ${scheduledDay} conflicts with a live GCal event — rescheduling`);
+            const augmented = [...initialBusy, ...liveEvents];
+            const fb = fallbackSchedule(augmented, finalEstimatedMinutes, deadline, timezone);
+            finalScheduledStart = fb.scheduled_start;
+            finalScheduledEnd   = fb.scheduled_end;
+          }
         }
       }
+    } catch (err) {
+      console.warn('[/api/tasks/create] Future-day GCal check failed (non-fatal):', err);
     }
-  } catch (err) {
-    console.warn('[/api/tasks/create] Future-day GCal check failed (non-fatal):', err);
   }
 
-  const baseInsert = {
+  const baseInsert: Record<string, unknown> = {
     user_id:           user.id,
     title,
     description:       description ?? null,
@@ -275,11 +288,14 @@ export async function POST(req: NextRequest) {
     scheduled_start:   finalScheduledStart,
     status:            'pending',
   };
+  if (isFixed) baseInsert.is_fixed = true;
 
   // ── Split trigger ───────────────────────────────────────────────────────────
   // Split any task > 60 min that has a future deadline — encourages breaks and
   // spreads long tasks across the available window instead of one marathon session.
+  // Fixed tasks are never split.
   const shouldSplit =
+    !isFixed &&
     deadline &&
     new Date(deadline) > new Date() &&
     finalEstimatedMinutes > 60;

@@ -49,6 +49,7 @@ export default function TaskEditModal({ task, onClose, onSave }: Props) {
   const [customMinutes, setCustomMinutes]   = useState('');
   const [startDate, setStartDate]           = useState('');
   const [startTime, setStartTime]           = useState('');
+  const [isFixed, setIsFixed]               = useState(false);
   const [loading, setLoading]               = useState(false);
   const [deleting, setDeleting]             = useState(false);
   const [error, setError]                   = useState<string | null>(null);
@@ -79,6 +80,7 @@ export default function TaskEditModal({ task, onClose, onSave }: Props) {
     setStartDate(st.date);
     setStartTime(st.time);
 
+    setIsFixed(task.is_fixed ?? false);
     setError(null);
     setConfirmDelete(false);
     setDeleting(false);
@@ -122,6 +124,7 @@ export default function TaskEditModal({ task, onClose, onSave }: Props) {
         priority,
         deadline: buildDeadline() ?? null,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        isFixed,
       };
       if (estimatedMinutes > 0) body.estimatedMinutes = estimatedMinutes;
       const newStart = buildScheduledStart();
@@ -324,6 +327,27 @@ export default function TaskEditModal({ task, onClose, onSave }: Props) {
                 className="w-32 px-3 py-2.5 border border-surface-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-surface-900"
               />
             </div>
+          </div>
+
+          {/* Pin to time */}
+          <div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isFixed}
+                onChange={(e) => setIsFixed(e.target.checked)}
+                className="w-4 h-4 rounded border-surface-300 text-teal-600 focus:ring-teal-500"
+              />
+              <span className="text-sm font-medium text-surface-700 flex items-center gap-1.5">
+                <svg className="w-3.5 h-3.5 text-teal-600" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+                </svg>
+                Pin to this time
+              </span>
+            </label>
+            {isFixed && (
+              <p className="text-xs text-teal-600 mt-1">This task won&apos;t be auto-rescheduled</p>
+            )}
           </div>
 
           {error && (

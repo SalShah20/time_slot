@@ -21,6 +21,7 @@ export async function PATCH(
     estimatedMinutes?: number;
     scheduledStart?: string;
     timezone?: string;
+    isFixed?: boolean;
   };
 
   const supabase = createSupabaseServer();
@@ -49,6 +50,7 @@ export async function PATCH(
   if (body.priority !== undefined)         update.priority          = body.priority || null;
   if (body.deadline !== undefined)         update.deadline          = body.deadline || null;
   if (body.estimatedMinutes !== undefined) update.estimated_minutes = body.estimatedMinutes;
+  if (body.isFixed !== undefined)         update.is_fixed          = body.isFixed;
 
   const newMinutes = body.estimatedMinutes ?? (existing.estimated_minutes as number);
 
@@ -72,7 +74,9 @@ export async function PATCH(
   const userMovedStart =
     body.scheduledStart !== undefined &&
     body.scheduledStart !== (existing.scheduled_start as string | null);
+  const taskIsFixed = (body.isFixed ?? existing.is_fixed) === true;
   const needsReschedule =
+    !taskIsFixed &&                 // fixed tasks are never auto-rescheduled
     body.deadline !== undefined &&  // deadline field was explicitly sent
     !userMovedStart &&              // user didn't manually reposition the task
     newDeadline !== null &&

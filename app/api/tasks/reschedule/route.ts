@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
     // Lower bound is 7 days ago so past-due tasks that were never started are included.
     const { data: pendingTasks, error: tasksError } = await supabase
       .from('tasks')
-      .select('id, title, description, tag, priority, estimated_minutes, scheduled_start, scheduled_end, deadline, status, google_event_id')
+      .select('id, title, description, tag, priority, estimated_minutes, scheduled_start, scheduled_end, deadline, status, google_event_id, is_fixed')
       .eq('user_id', user.id)
       .eq('status', 'pending')
       .gte('scheduled_start', sevenDaysAgo)
@@ -110,6 +110,7 @@ export async function POST(req: NextRequest) {
     for (const task of pendingTasks ?? []) {
       try {
         if (!task.scheduled_start) continue;
+        if (task.is_fixed) continue; // Fixed tasks are never rescheduled
 
         const taskStart = new Date(task.scheduled_start);
         const taskEnd   = task.scheduled_end

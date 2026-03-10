@@ -13,6 +13,10 @@ export interface TaskInput {
   estimatedMinutes?: number;
   priority: string;
   deadline?: string;
+  /** Pin this task to a specific time — skips auto-scheduling */
+  isFixed?: boolean;
+  /** ISO start time for fixed tasks (required when isFixed is true) */
+  fixedStart?: string;
 }
 
 interface Props {
@@ -52,6 +56,9 @@ export default function TaskForm({ onTaskCreated, onTasksCreated, hideHeader = f
   const [durationValue, setDurationValue] = useState<number>(-1);
   const [customMinutes, setCustomMinutes] = useState('');
   const [priority, setPriority]         = useState<Priority>('medium');
+  const [isFixed, setIsFixed]           = useState(false);
+  const [fixedDate, setFixedDate]       = useState('');
+  const [fixedTime, setFixedTime]       = useState('');
   const [loading, setLoading]           = useState(false);
   const [error, setError]               = useState<string | null>(null);
   const [success, setSuccess]           = useState(false);
@@ -80,6 +87,9 @@ export default function TaskForm({ onTaskCreated, onTasksCreated, hideHeader = f
     setDurationValue(60);
     setCustomMinutes('');
     setPriority('medium');
+    setIsFixed(false);
+    setFixedDate('');
+    setFixedTime('');
     setError(null);
   }
 
@@ -89,8 +99,11 @@ export default function TaskForm({ onTaskCreated, onTasksCreated, hideHeader = f
     setSuccess(false);
 
     if (!title.trim())                             return setError('Task title is required.');
-    if (!deadlineDate)                             return setError('Deadline date is required.');
+    if (!isFixed && !deadlineDate)                 return setError('Deadline date is required.');
     if (!isAiEstimate && estimatedMinutes < 1)     return setError('Please enter a valid duration.');
+    if (isFixed && (!fixedDate || !fixedTime))      return setError('Fixed-time tasks require both a date and time.');
+
+    const fixedStart = isFixed ? new Date(`${fixedDate}T${fixedTime}:00`).toISOString() : undefined;
 
     // Queue mode: collect data without API call
     if (isQueueMode) {
@@ -105,6 +118,8 @@ export default function TaskForm({ onTaskCreated, onTasksCreated, hideHeader = f
         estimatedMinutes: isAiEstimate ? undefined : estimatedMinutes,
         priority,
         deadline:        buildDeadline(),
+        isFixed:         isFixed || undefined,
+        fixedStart,
       });
       resetForm();
       setSuccess(true);
@@ -125,6 +140,8 @@ export default function TaskForm({ onTaskCreated, onTasksCreated, hideHeader = f
           priority,
           deadline:         buildDeadline(),
           timezone:         Intl.DateTimeFormat().resolvedOptions().timeZone,
+          isFixed:          isFixed || undefined,
+          fixedStart,
         }),
       });
 
@@ -216,6 +233,43 @@ export default function TaskForm({ onTaskCreated, onTasksCreated, hideHeader = f
             />
           </div>
           <p className="text-xs text-surface-400 mt-1">Time defaults to midnight if left blank</p>
+        </div>
+
+        {/* Pin to specific time */}
+        <div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={isFixed}
+              onChange={(e) => setIsFixed(e.target.checked)}
+              className="w-4 h-4 rounded border-surface-300 text-teal-600 focus:ring-teal-500"
+            />
+            <span className="text-sm font-medium text-surface-700 flex items-center gap-1.5">
+              <svg className="w-3.5 h-3.5 text-teal-600" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+              </svg>
+              Pin to specific time
+            </span>
+          </label>
+          {isFixed && (
+            <>
+              <div className="flex gap-2 mt-2">
+                <input
+                  type="date"
+                  value={fixedDate}
+                  onChange={(e) => setFixedDate(e.target.value)}
+                  className="flex-1 px-3 py-2.5 border border-surface-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-surface-900"
+                />
+                <input
+                  type="time"
+                  value={fixedTime}
+                  onChange={(e) => setFixedTime(e.target.value)}
+                  className="w-32 px-3 py-2.5 border border-surface-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-surface-900"
+                />
+              </div>
+              <p className="text-xs text-teal-600 mt-1">This task won&apos;t be auto-rescheduled</p>
+            </>
+          )}
         </div>
 
         {/* Tag — freeform with suggestions */}
@@ -359,7 +413,7 @@ export default function TaskForm({ onTaskCreated, onTasksCreated, hideHeader = f
           disabled={loading}
           className="w-full py-2.5 bg-teal-600 text-white text-sm font-semibold rounded-lg hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          {loading ? 'Scheduling…' : isQueueMode ? '+ Add to Queue' : '+ Add & Auto-Schedule'}
+          {loading ? 'Scheduling…' : isQueueMode ? '+ Add to Queue' : isFixed ? '+ Pin & Schedule' : '+ Add & Auto-Schedule'}
         </button>
       </form>
     </div>

@@ -640,6 +640,14 @@ export default function Home() {
                           <p className={`text-sm font-medium truncate ${isDone ? 'line-through text-surface-400' : 'text-surface-900'}`}>
                             {task.title}
                           </p>
+                          {task.is_fixed && (
+                            <span className="text-xs text-teal-600 flex items-center gap-1">
+                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+                              </svg>
+                              Pinned
+                            </span>
+                          )}
                           {(task.total_sessions ?? 1) > 1 && (
                             <span className="text-xs text-teal-600">
                               {task.total_sessions} sessions

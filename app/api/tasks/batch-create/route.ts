@@ -16,6 +16,8 @@ interface TaskInput {
   estimatedMinutes: number;
   priority?: string;
   deadline?: string;
+  isFixed?: boolean;
+  fixedStart?: string;
 }
 
 interface ScheduledTask extends TaskInput {
@@ -53,7 +55,8 @@ async function applyBatchSplitting(
   for (const task of llmScheduled) {
     const deadline       = task.deadline ? new Date(task.deadline) : null;
     // Split any task > 60 min with a future deadline — spreads work across the window
-    const shouldSplitTask = deadline && deadline > now && task.estimatedMinutes > 60;
+    // Fixed tasks are never split.
+    const shouldSplitTask = !task.isFixed && deadline && deadline > now && task.estimatedMinutes > 60;
 
     if (shouldSplitTask) {
       // Do NOT add the discarded LLM slot to allBusy — let computeSplitSessions use
@@ -360,11 +363,28 @@ export async function POST(req: NextRequest) {
     })),
   ];
 
-  // Sort by urgency so the most time-sensitive tasks claim slots first
-  const sortedTasks = [...tasksWithDurations].sort((a, b) => urgencyScore(a) - urgencyScore(b));
+  // Partition: fixed tasks get their user-specified time; auto tasks go to the LLM
+  const fixedTasks = tasksWithDurations.filter((t) => t.isFixed && t.fixedStart);
+  const autoTasks  = tasksWithDurations.filter((t) => !t.isFixed || !t.fixedStart);
 
-  // Schedule all tasks together (one LLM call)
-  const scheduled = await scheduleBatchWithLLM(sortedTasks, existingBusy, timezone);
+  // Convert fixed tasks to scheduled form and add them as busy intervals
+  const fixedScheduled: ScheduledTask[] = fixedTasks.map((t) => ({
+    ...t,
+    scheduled_start: new Date(t.fixedStart!).toISOString(),
+    scheduled_end:   new Date(new Date(t.fixedStart!).getTime() + t.estimatedMinutes * 60_000).toISOString(),
+  }));
+  for (const ft of fixedScheduled) {
+    existingBusy.push({ start: new Date(ft.scheduled_start), end: new Date(ft.scheduled_end) });
+  }
+
+  // Sort auto tasks by urgency so the most time-sensitive claim slots first
+  const sortedTasks = [...autoTasks].sort((a, b) => urgencyScore(a) - urgencyScore(b));
+
+  // Schedule auto tasks together (one LLM call); merge with pre-scheduled fixed tasks
+  const autoScheduled = sortedTasks.length > 0
+    ? await scheduleBatchWithLLM(sortedTasks, existingBusy, timezone)
+    : [];
+  const scheduled = [...fixedScheduled, ...autoScheduled];
   // Retain reference to existingBusy for applyBatchSplitting below.
 
   // Post-scheduling: for any task landing beyond tomorrow, fetch live GCal events
@@ -451,6 +471,7 @@ export async function POST(req: NextRequest) {
     status:            'pending',
     session_number:    1,
     total_sessions:    r.sessions.length,
+    is_fixed:          !!r.task.isFixed,
   }));
 
   const { data: insertedSession1, error: s1Error } = await supabase

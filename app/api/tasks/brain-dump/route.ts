@@ -8,6 +8,8 @@ interface ParsedTask {
   tag?: string;
   deadline?: string;
   description?: string;
+  isFixed?: boolean;
+  fixedStart?: string;
 }
 
 export async function POST(req: NextRequest) {
@@ -52,6 +54,11 @@ Parse the user's input into structured tasks. For each task extract:
   "next Monday" → next Monday at 23:59 local → convert to UTC
   "by 3pm" → today at 15:00 local → convert to UTC
   Omit if no deadline is mentioned.
+- isFixed (optional boolean): set to true ONLY when the user specifies an exact time to DO the task.
+  YES: "check into flight at 3pm", "meeting at 2:30pm", "call dentist at 10am tomorrow", "class at 9am"
+  NO: "finish essay by 3pm" (that's a deadline), "study sometime today" (no specific time)
+- fixedStart (optional): when isFixed is true, the UTC ISO 8601 datetime for the pinned start time.
+  Convert from local time using timezone ${timezone}.
 
 Rules:
 - One task per input line (or clearly separated phrase)
@@ -112,6 +119,10 @@ Respond ONLY with valid JSON (no markdown):
           : 'medium',
         deadline: t.deadline
           ? (() => { try { return new Date(t.deadline!).toISOString(); } catch { return undefined; } })()
+          : undefined,
+        isFixed: t.isFixed === true ? true : undefined,
+        fixedStart: t.isFixed && t.fixedStart
+          ? (() => { try { return new Date(t.fixedStart!).toISOString(); } catch { return undefined; } })()
           : undefined,
       }));
 

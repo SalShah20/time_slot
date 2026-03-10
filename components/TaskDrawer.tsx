@@ -219,6 +219,7 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
                   <p className="text-xs text-surface-500">
                     {task.estimatedMinutes ? formatDuration(task.estimatedMinutes) : 'AI estimate'}
                     {task.tag && ` · ${task.tag}`}
+                    {task.isFixed && ' · Pinned'}
                     {task.deadline && ` · due ${new Date(task.deadline).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
                   </p>
                 </div>
