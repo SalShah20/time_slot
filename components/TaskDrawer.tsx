@@ -278,7 +278,7 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
                 ? 'Scheduling…'
                 : queue.length === 0
                 ? 'Parse or add tasks above'
-                : `Schedule All ${queue.length} Task${queue.length !== 1 ? 's' : ''}`}
+                : `Schedule All (${queue.length})`}
             </button>
           </div>
         )}

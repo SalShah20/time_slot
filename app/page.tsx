@@ -388,7 +388,14 @@ export default function Home() {
 
   // ── Upcoming task list (left panel) ─────────────────────────────────────────
   const upcomingTasks = tasks
-    .filter((t) => (t.status === 'pending' || t.status === 'in_progress') && !t.parent_task_id)
+    .filter((t) => {
+      if (t.status !== 'pending' && t.status !== 'in_progress') return false;
+      // Show non-child tasks (parents + unsplit tasks)
+      if (!t.parent_task_id) return true;
+      // Show child sessions whose parent is no longer in the active tasks list
+      // (e.g. parent was completed but child sessions remain pending)
+      return !tasks.some((p) => p.id === t.parent_task_id);
+    })
     .sort((a, b) => {
       if (!a.scheduled_start) return 1;
       if (!b.scheduled_start) return -1;

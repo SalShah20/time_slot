@@ -33,6 +33,17 @@ export async function getCalendarClient(supabase: SupabaseClient, userId: string
       : undefined,
   });
 
+  // Persist refreshed tokens so subsequent calls don't need to re-refresh
+  oauth2Client.on('tokens', (tokens) => {
+    const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (tokens.access_token)  update.google_access_token  = tokens.access_token;
+    if (tokens.refresh_token) update.google_refresh_token = tokens.refresh_token;
+    if (tokens.expiry_date)   update.google_token_expiry  = new Date(tokens.expiry_date).toISOString();
+    supabase.from('user_tokens').update(update).eq('user_id', userId).then(() => {
+      console.log('[getCalendarClient] Persisted refreshed tokens for user', userId);
+    });
+  });
+
   return google.calendar({ version: 'v3', auth: oauth2Client });
 }
 

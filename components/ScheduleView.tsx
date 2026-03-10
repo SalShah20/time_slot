@@ -145,7 +145,7 @@ function TaskBlock({ task, colStyle, onEdit }: { task: TaskRow; colStyle?: React
         {!isSleepHour && task.tag && (
           <span
             className="text-xs font-medium px-1.5 py-0.5 rounded-full"
-            style={{ backgroundColor: tagColor.hex + '22', color: tagColor.hex }}
+            style={{ backgroundColor: tagColor.hex + '22', color: tagColor.darkHex }}
           >
             {task.tag}
           </span>
