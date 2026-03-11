@@ -81,7 +81,7 @@ function snapToWorkHours(t: Date, tz: string): Date {
 /**
  * Deterministic free-slot finder.
  * Finds the earliest gap in `busyIntervals` that fits `estimatedMinutes`,
- * starting no earlier than now+10 min.
+ * starting no earlier than now+60 min.
  *
  * Scheduling priority:
  *   1. Preferred: 8 AM – 11 PM (college student normal hours)

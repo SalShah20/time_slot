@@ -439,7 +439,7 @@ export default function Home() {
               </button>
               <a
                 href="/api/calendar/oauth"
-                className="px-2 py-1.5 text-xs text-surface-400 hover:text-teal-600 transition-colors"
+                className="hidden sm:block px-2 py-1.5 text-xs text-surface-400 hover:text-teal-600 transition-colors"
                 title="Reconnect Google Calendar to reload all events"
               >
                 Reconnect
@@ -491,7 +491,7 @@ export default function Home() {
             <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
               <path d="M8 5v14l11-7z" />
             </svg>
-            {timerActive ? 'Timer Running' : 'Start Timer'}
+            {timerActive ? <><span className="hidden sm:inline">Timer </span>Running</> : <><span className="hidden sm:inline">Start </span>Timer</>}
           </button>
 
           {/* User menu */}

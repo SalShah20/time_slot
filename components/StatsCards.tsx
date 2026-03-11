@@ -21,7 +21,7 @@ function StatCard({
       </div>
       <div className="min-w-0">
         <p className="text-xl md:text-2xl font-bold text-surface-900 leading-tight">{value}</p>
-        <p className="text-xs text-surface-500 font-medium truncate">{label}</p>
+        <p className="text-[11px] sm:text-xs text-surface-500 font-medium">{label}</p>
       </div>
     </div>
   );
