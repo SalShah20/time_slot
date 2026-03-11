@@ -51,8 +51,7 @@ export default function PrivacyPolicy() {
               We request the following Google API scopes:
             </p>
             <ul className="list-disc ml-6 mt-2 space-y-1">
-              <li><code className="text-sm bg-surface-100 px-1 rounded">calendar.events</code> — to read, create, update, and delete calendar events for task scheduling</li>
-              <li><code className="text-sm bg-surface-100 px-1 rounded">calendar.readonly</code> — to read your calendar events for conflict detection</li>
+              <li><code className="text-sm bg-surface-100 px-1 rounded">auth/calendar</code> — to read, create, update, and delete calendar events for task scheduling and conflict detection</li>
             </ul>
 
             <h3 className="font-semibold text-surface-800 mt-4 mb-2">Google OAuth Tokens</h3>
