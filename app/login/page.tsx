@@ -187,6 +187,16 @@ export default function LoginPage() {
           </>
         )}
       </div>
+
+      <div className="mt-6 flex items-center justify-center gap-3 text-xs text-surface-400">
+        <Link href="/privacy" className="hover:text-surface-600 transition-colors">
+          Privacy Policy
+        </Link>
+        <span>&middot;</span>
+        <Link href="/terms" className="hover:text-surface-600 transition-colors">
+          Terms of Service
+        </Link>
+      </div>
     </div>
   );
 }

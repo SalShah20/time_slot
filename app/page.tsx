@@ -531,6 +531,10 @@ export default function Home() {
                   >
                     Sign out
                   </button>
+                  <div className="border-t border-surface-100 px-3 py-2 flex gap-3">
+                    <a href="/privacy" className="text-xs text-surface-400 hover:text-surface-600 transition-colors">Privacy</a>
+                    <a href="/terms" className="text-xs text-surface-400 hover:text-surface-600 transition-colors">Terms</a>
+                  </div>
                 </div>
               )}
             </div>
