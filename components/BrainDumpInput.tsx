@@ -63,10 +63,10 @@ export default function BrainDumpInput({ onTasksQueued, onSwitchToForm }: Props)
               void handleSubmit();
             }
           }}
-          placeholder={"Type your tasks naturally…\n\n• Finish CS homework by Friday 2 hours\n• Study for exam tomorrow high priority\n• Gym workout 1hr personal\n• Submit job app Monday work\n\nOne task per line — AI handles the rest"}
+          placeholder={"Type your tasks naturally…\n\n• Finish CS homework by Friday 2 hours\n• Study for exam tomorrow high priority\n• Gym workout 1hr personal\n• Submit job app Monday work"}
           rows={7}
           className="w-full px-3 py-3 border border-surface-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-surface-900 placeholder:text-surface-400 resize-none leading-relaxed"
-          style={{ fontSize: '16px' }}
+          style={{ fontSize: '16px', minHeight: '180px' }}
         />
         {input.trim() && (
           <span className="absolute bottom-2.5 right-3 text-xs text-surface-400 pointer-events-none bg-white px-1">
@@ -82,6 +82,11 @@ export default function BrainDumpInput({ onTasksQueued, onSwitchToForm }: Props)
       {success && (
         <p className="text-sm text-teal-700 bg-teal-50 px-3 py-2 rounded-lg font-medium">{success}</p>
       )}
+
+      {/* Hint */}
+      <p className="text-xs text-surface-400">
+        One task per line. Write naturally — AI figures out the rest.
+      </p>
 
       {/* Submit */}
       <button
@@ -107,7 +112,7 @@ export default function BrainDumpInput({ onTasksQueued, onSwitchToForm }: Props)
       {/* Tips + form toggle */}
       <div className="flex items-start justify-between gap-3">
         <p className="text-xs text-surface-500 leading-relaxed">
-          Include deadline (&ldquo;by Friday&rdquo;), duration (&ldquo;2 hours&rdquo;), priority (&ldquo;urgent&rdquo;). One task per line.
+          Write naturally: deadlines (&ldquo;by Friday&rdquo;), duration (&ldquo;2 hours&rdquo;), priority (&ldquo;urgent&rdquo;).
         </p>
         <button
           type="button"
