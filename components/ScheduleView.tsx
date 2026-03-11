@@ -176,12 +176,12 @@ function BlockItem({
 
   const isGoogle = block.source === 'google';
   const bg = isGoogle
-    ? 'bg-violet-50 text-violet-900 border-violet-300'
+    ? 'bg-surface-100 text-surface-700 border-surface-400'
     : 'bg-indigo-50 text-indigo-900 border-indigo-300';
 
   return (
     <div
-      className={`absolute left-14 right-2 rounded-lg border-l-4 px-2.5 py-1.5 overflow-hidden shadow-sm z-[5] opacity-80 ${bg}`}
+      className={`absolute left-14 right-2 rounded-lg border-l-[3px] px-2.5 py-1.5 overflow-hidden shadow-sm z-[5] opacity-80 ${bg}`}
       style={{ top: `${top}px`, height: `${height}px`, ...colStyle }}
       title={block.title}
       onMouseEnter={() => setHovered(true)}
@@ -200,7 +200,7 @@ function BlockItem({
         )}
       </div>
       {isGoogle && (
-        <p className="text-xs opacity-50 truncate">Google Calendar</p>
+        <p className="text-xs text-surface-500 truncate">Google Calendar</p>
       )}
     </div>
   );
@@ -322,9 +322,9 @@ export default function ScheduleView({
   return (
     <div className="h-full flex flex-col">
       {/* Date header */}
-      <div className="flex items-center justify-between px-5 py-3.5 border-b border-surface-200 bg-white flex-shrink-0">
+      <div className="flex flex-wrap items-center justify-between gap-y-1 px-4 md:px-5 py-3 md:py-3.5 border-b border-surface-200 bg-white flex-shrink-0">
         {/* Date nav: ← date → */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1">
           {onDateChange && (
             <button
               onClick={() => onDateChange(prevDay)}
@@ -338,7 +338,7 @@ export default function ScheduleView({
           )}
           <div>
             <div className="flex items-baseline gap-1.5">
-              <h2 className="text-base font-bold text-surface-900">
+              <h2 className="text-sm md:text-base font-bold text-surface-900">
                 {formatDateHeader(selectedDate)}
               </h2>
               {dayLabel && (
@@ -380,13 +380,13 @@ export default function ScheduleView({
           )}
 
           {viewTasks.length > 0 && (
-            <span className="text-xs bg-teal-100 text-teal-700 font-medium px-2 py-0.5 rounded-full">
-              {viewTasks.length} task{viewTasks.length > 1 ? 's' : ''} scheduled
+            <span className="text-xs bg-teal-100 text-teal-700 font-medium px-2 py-0.5 rounded-full whitespace-nowrap">
+              {viewTasks.length} task{viewTasks.length > 1 ? 's' : ''}
             </span>
           )}
           <button
             onClick={() => setShowAddBlock(true)}
-            className="flex items-center gap-1 px-2.5 py-1 border border-surface-200 rounded-lg text-xs font-medium text-surface-600 hover:bg-surface-50 transition-colors"
+            className="hidden md:flex items-center gap-1 px-2.5 py-1 border border-surface-200 rounded-lg text-xs font-medium text-surface-600 hover:bg-surface-50 transition-colors"
           >
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
@@ -414,7 +414,7 @@ export default function ScheduleView({
       )}
 
       {/* Mobile quick-jump strip */}
-      <div className="md:hidden flex-shrink-0 flex gap-2 px-4 py-2 overflow-x-auto border-b border-surface-100 bg-white">
+      <div className="md:hidden flex-shrink-0 flex gap-2 px-4 py-2 overflow-x-auto border-b border-surface-100 bg-white [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
         <button
           onClick={() => scrollToHour(8)}
           className="px-3 py-1 text-xs bg-amber-50 text-amber-700 border border-amber-200 rounded-full whitespace-nowrap flex-shrink-0"

@@ -423,28 +423,19 @@ export default function Home() {
         <div className="flex items-center gap-3">
           {/* Google Calendar */}
           {calendarConnected && !calendarSyncError ? (
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => void handleManualSync()}
-                disabled={calendarSyncing}
-                className="flex items-center gap-1.5 px-3 py-1.5 border border-teal-200 bg-teal-50 rounded-lg text-xs font-medium text-teal-700 hover:bg-teal-100 transition-colors disabled:opacity-60"
-                title="Click to resync"
-              >
-                <svg className={`w-3.5 h-3.5 ${calendarSyncing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  {calendarSyncing
-                    ? <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    : <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />}
-                </svg>
-                {calendarSyncing ? 'Syncing…' : <><span className="hidden sm:inline">Google Calendar</span><span className="sm:hidden">GCal</span></>}
-              </button>
-              <a
-                href="/api/calendar/oauth"
-                className="hidden md:block px-2 py-1.5 text-xs text-surface-400 hover:text-teal-600 transition-colors"
-                title="Reconnect Google Calendar to reload all events"
-              >
-                Reconnect
-              </a>
-            </div>
+            <button
+              onClick={() => void handleManualSync()}
+              disabled={calendarSyncing}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-teal-200 bg-teal-50 rounded-lg text-xs font-medium text-teal-700 hover:bg-teal-100 transition-colors disabled:opacity-60"
+              title="Click to resync"
+            >
+              <svg className={`w-3.5 h-3.5 ${calendarSyncing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                {calendarSyncing
+                  ? <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  : <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />}
+              </svg>
+              {calendarSyncing ? 'Syncing…' : <><span className="hidden sm:inline">Google Calendar</span><span className="sm:hidden">GCal</span></>}
+            </button>
           ) : calendarSyncError ? (
             <a
               href="/api/calendar/oauth"
