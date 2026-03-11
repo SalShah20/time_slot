@@ -13,7 +13,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-xl font-semibold text-surface-900 mb-3">1. Acceptance of Terms</h2>
             <p>
-              By accessing or using TimeSlot (&quot;the app&quot;, &quot;our service&quot;), you agree
+              By accessing or using TimeSlot, you agree
               to be bound by these Terms of Service. If you do not agree to these terms, do not use the
               app.
             </p>
