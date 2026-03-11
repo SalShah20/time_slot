@@ -21,7 +21,7 @@ function StatCard({
       </div>
       <div className="min-w-0">
         <p className="text-xl md:text-2xl font-bold text-surface-900 leading-tight">{value}</p>
-        <p className="text-[11px] sm:text-xs text-surface-500 font-medium">{label}</p>
+        <p className="text-[11px] sm:text-xs text-surface-500 font-medium whitespace-nowrap">{label}</p>
       </div>
     </div>
   );
@@ -46,7 +46,7 @@ export default function StatsCards() {
 
   return (
     <div className="flex-shrink-0 overflow-x-auto px-4 md:px-6 py-3 md:py-4">
-      <div className="flex md:grid md:grid-cols-3 gap-3">
+      <div className="flex gap-2 md:grid md:grid-cols-3 md:gap-3">
         <StatCard
           label="Total Tasks"
           value={stats.total}

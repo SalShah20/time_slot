@@ -641,7 +641,7 @@ export default function Home() {
                           onClick={() => setEditingTask(task)}
                           title="Click to edit task"
                         >
-                          <p className={`text-sm font-medium truncate ${isDone ? 'line-through text-surface-400' : 'text-surface-900'}`}>
+                          <p className={`text-sm font-medium line-clamp-2 ${isDone ? 'line-through text-surface-400' : 'text-surface-900'}`}>
                             {task.title}
                           </p>
                           {task.is_fixed && (
