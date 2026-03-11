@@ -93,7 +93,7 @@ RULES:
 6. If there is no estimated duration, estimate based on the task name, description, similar tasks, and tags
 7. If multiple valid slots, pick the earliest valid one
 8. The earlier the deadline, the earlier the task should be scheduled
-9. Always leave at least 15 minutes of buffer between tasks
+9. Always leave at least 10 minutes of buffer between tasks
 10. If the deadline is 5 or more days away, do NOT schedule today — prefer tomorrow or later
 11. For longer tasks with later due dates, it is ok to break them up into multiple sessions (ie. research papers, studying for a hard exam,...)
 

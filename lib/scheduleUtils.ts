@@ -101,7 +101,10 @@ export function fallbackSchedule(
   timezone = 'America/Los_Angeles',
 ): { scheduled_start: string; scheduled_end: string } {
   const now    = new Date();
-  const sorted = [...busyIntervals].sort((a, b) => a.start.getTime() - b.start.getTime());
+  // Pad each busy interval's end by 10 min to guarantee breathing room between tasks
+  const sorted = busyIntervals
+    .map((iv) => ({ start: iv.start, end: new Date(iv.end.getTime() + 10 * 60_000) }))
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
 
   // If deadline is more than 5 days away, start from tomorrow 8 AM instead of ASAP —
   // there's no urgency to schedule it immediately.
@@ -145,10 +148,11 @@ export function fallbackSchedule(
       continue;
     }
 
-    // Push past any busy interval that overlaps [candidate, end), adding a 15-min buffer
+    // Push past any busy interval that overlaps [candidate, end)
+    // (iv.end already includes the 10-min padding applied above)
     for (const iv of sorted) {
       if (iv.start < end && iv.end > candidate) {
-        candidate = snapToWorkHours(new Date(iv.end.getTime() + 15 * 60_000), timezone);
+        candidate = snapToWorkHours(new Date(iv.end.getTime()), timezone);
         changed   = true;
         break;
       }

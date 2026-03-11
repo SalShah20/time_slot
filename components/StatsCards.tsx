@@ -15,8 +15,8 @@ function StatCard({
   accent: string;
 }) {
   return (
-    <div className="min-w-[140px] md:min-w-0 bg-white border border-surface-200 rounded-xl px-3.5 md:px-5 py-3 md:py-4 flex items-center gap-2.5 md:gap-4">
-      <div className={`w-9 h-9 md:w-10 md:h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${accent}`}>
+    <div className="flex-1 min-w-0 bg-white border border-surface-200 rounded-xl px-2.5 md:px-5 py-2.5 md:py-4 flex items-center gap-2 md:gap-4">
+      <div className={`w-8 h-8 md:w-10 md:h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${accent}`}>
         {icon}
       </div>
       <div className="min-w-0">

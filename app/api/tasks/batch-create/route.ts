@@ -145,7 +145,7 @@ RULES:
 3. Tasks due sooner should generally be scheduled sooner
 4. No overlaps between tasks being scheduled, or with existing busy intervals
 5. Start at least 1 hour from NOW — never schedule something starting in the next 60 minutes
-6. Always leave at least 15 minutes of buffer between tasks
+6. Always leave at least 10 minutes of buffer between tasks
 7. If multiple valid slots for a task, pick the earliest valid one
 8. If the deadline is 5 or more days away, do NOT schedule today — prefer tomorrow or later
 
