@@ -24,11 +24,13 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  // Allow unauthenticated access to login, signup, and auth callback
+  // Allow unauthenticated access to public pages
   if (
     pathname.startsWith('/login') ||
     pathname.startsWith('/signup') ||
-    pathname.startsWith('/auth/callback')
+    pathname.startsWith('/auth/callback') ||
+    pathname.startsWith('/privacy') ||
+    pathname.startsWith('/terms')
   ) {
     return response;
   }
