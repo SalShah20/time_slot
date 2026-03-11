@@ -176,12 +176,12 @@ function BlockItem({
 
   const isGoogle = block.source === 'google';
   const bg = isGoogle
-    ? 'bg-surface-100 text-surface-700 border-surface-400'
+    ? 'bg-violet-50 text-violet-900 border-violet-300'
     : 'bg-indigo-50 text-indigo-900 border-indigo-300';
 
   return (
     <div
-      className={`absolute left-14 right-2 rounded-lg border-l-[3px] px-2.5 py-1.5 overflow-hidden shadow-sm z-[5] opacity-80 ${bg}`}
+      className={`absolute left-14 right-2 rounded-lg border-l-4 px-2.5 py-1.5 overflow-hidden shadow-sm z-[5] opacity-80 ${bg}`}
       style={{ top: `${top}px`, height: `${height}px`, ...colStyle }}
       title={block.title}
       onMouseEnter={() => setHovered(true)}
@@ -200,7 +200,7 @@ function BlockItem({
         )}
       </div>
       {isGoogle && (
-        <p className="text-xs text-surface-500 truncate">Google Calendar</p>
+        <p className="text-xs opacity-50 truncate">Google Calendar</p>
       )}
     </div>
   );
@@ -386,7 +386,7 @@ export default function ScheduleView({
           )}
           <button
             onClick={() => setShowAddBlock(true)}
-            className="hidden md:flex items-center gap-1 px-2.5 py-1 border border-surface-200 rounded-lg text-xs font-medium text-surface-600 hover:bg-surface-50 transition-colors"
+            className="flex items-center gap-1 px-2.5 py-1 border border-surface-200 rounded-lg text-xs font-medium text-surface-600 hover:bg-surface-50 transition-colors"
           >
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
