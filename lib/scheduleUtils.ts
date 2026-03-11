@@ -3,6 +3,18 @@ export interface BusyInterval {
   end: Date;
 }
 
+export interface WorkHours {
+  workStartHour: number;   // default 8  (earliest start)
+  workEndHour: number;     // default 23 (end of preferred window)
+  workEndLateHour: number; // default 3  (absolute latest / last resort)
+}
+
+export const DEFAULT_WORK_HOURS: WorkHours = {
+  workStartHour: 8,
+  workEndHour: 23,
+  workEndLateHour: 3,
+};
+
 /** First hour tasks may start (inclusive). Preferred window ends at 11 PM. */
 export const WORK_START_HOUR = 8; // 8 AM
 /**
@@ -64,14 +76,12 @@ export function localTimeOnDay(date: Date, hour: number, minute: number, tz: str
 
 /**
  * Advances `t` into the valid scheduling window in `tz`.
- * • 3 AM – 8 AM (hard blackout) → snaps to 8 AM on the same local day.
- * • All other hours (7 AM – midnight, or midnight – 3 AM as a last resort) → kept as-is.
+ * Hard blackout (lateHour – startHour) → snaps to startHour on the same local day.
  */
-function snapToWorkHours(t: Date, tz: string): Date {
+function snapToWorkHours(t: Date, tz: string, wh: WorkHours = DEFAULT_WORK_HOURS): Date {
   const h = localHourIn(t, tz);
-  // Hard blackout (3 AM – 7 AM): snap to 7 AM same local day.
-  if (h >= LATE_NIGHT_MAX_HOUR && h < WORK_START_HOUR) {
-    return localTimeOnDay(t, WORK_START_HOUR, 0, tz, 0);
+  if (h >= wh.workEndLateHour && h < wh.workStartHour) {
+    return localTimeOnDay(t, wh.workStartHour, 0, tz, 0);
   }
   return t;
 }
@@ -84,41 +94,37 @@ function snapToWorkHours(t: Date, tz: string): Date {
  * starting no earlier than now+60 min.
  *
  * Scheduling priority:
- *   1. Preferred: 8 AM – 11 PM (college student normal hours)
- *   2. Last resort: 11 PM – 3 AM (used only when earlier slots are fully booked)
- *   3. Hard blackout: 3 AM – 8 AM (never scheduled)
+ *   1. Preferred: workStartHour – workEndHour
+ *   2. Last resort: workEndHour – workEndLateHour (next day)
+ *   3. Hard blackout: workEndLateHour – workStartHour (never scheduled)
  *
- * Falls back to the next day's 7 AM when tonight is also fully booked.
- *
- * @param timezone  IANA timezone string (e.g. "America/New_York"). Defaults to
- *                  "America/Los_Angeles" for backwards-compat, but you should
- *                  always pass the user's real timezone so this works on UTC servers.
+ * Falls back to the next day's workStartHour when tonight is also fully booked.
  */
 export function fallbackSchedule(
   busyIntervals: BusyInterval[],
   estimatedMinutes: number,
   deadline?: string | null,
   timezone = 'America/Los_Angeles',
+  workHours: WorkHours = DEFAULT_WORK_HOURS,
 ): { scheduled_start: string; scheduled_end: string } {
   const now    = new Date();
+  const wh     = workHours;
   // Pad each busy interval's end by 10 min to guarantee breathing room between tasks
   const sorted = busyIntervals
     .map((iv) => ({ start: iv.start, end: new Date(iv.end.getTime() + 10 * 60_000) }))
     .sort((a, b) => a.start.getTime() - b.start.getTime());
 
-  // If deadline is more than 5 days away, start from tomorrow 8 AM instead of ASAP —
-  // there's no urgency to schedule it immediately.
+  // If deadline is more than 5 days away, start from tomorrow at workStartHour instead
+  // of ASAP — there's no urgency to schedule it immediately.
   const DAYS_UNTIL_DEFER = 5;
   const fiveDaysFromNow = new Date(now.getTime() + DAYS_UNTIL_DEFER * 24 * 60 * 60_000);
   const useDeferredStart = deadline && new Date(deadline) > fiveDaysFromNow;
 
-  // Start within valid hours: at least 1 hour from now (give user time to prepare).
-  // For far-deadline tasks, prefer tomorrow 8 AM so they don't clutter today's schedule.
   let candidate: Date;
   if (useDeferredStart) {
-    candidate = localTimeOnDay(now, WORK_START_HOUR, 0, timezone, 1); // tomorrow 8 AM
+    candidate = localTimeOnDay(now, wh.workStartHour, 0, timezone, 1);
   } else {
-    candidate = snapToWorkHours(new Date(now.getTime() + 60 * 60_000), timezone);
+    candidate = snapToWorkHours(new Date(now.getTime() + 60 * 60_000), timezone, wh);
   }
 
   console.log(
@@ -136,14 +142,10 @@ export function fallbackSchedule(
     const endH     = localHourIn(end, timezone);
     const crossDay = localDateStrIn(end, timezone) !== localDateStrIn(candidate, timezone);
 
-    // If the slot end lands in the hard blackout (3 AM – 7 AM), push to 7 AM on
-    // the end's local day. If it crosses into next-day daytime (7 AM+), do the same.
-    // A slot ending between midnight and 3 AM is acceptable as a last resort and is
-    // left alone to fall through to the overlap check.
-    const endInBlackout     = endH >= LATE_NIGHT_MAX_HOUR && endH < WORK_START_HOUR;
-    const endCrossesIntoDay = crossDay && endH >= WORK_START_HOUR;
+    const endInBlackout     = endH >= wh.workEndLateHour && endH < wh.workStartHour;
+    const endCrossesIntoDay = crossDay && endH >= wh.workStartHour;
     if (endInBlackout || endCrossesIntoDay) {
-      candidate = localTimeOnDay(end, WORK_START_HOUR, 0, timezone, 0);
+      candidate = localTimeOnDay(end, wh.workStartHour, 0, timezone, 0);
       changed   = true;
       continue;
     }
@@ -152,7 +154,7 @@ export function fallbackSchedule(
     // (iv.end already includes the 10-min padding applied above)
     for (const iv of sorted) {
       if (iv.start < end && iv.end > candidate) {
-        candidate = snapToWorkHours(new Date(iv.end.getTime()), timezone);
+        candidate = snapToWorkHours(new Date(iv.end.getTime()), timezone, wh);
         changed   = true;
         break;
       }
@@ -170,14 +172,13 @@ export function fallbackSchedule(
     }
 
     // Last resort: place task right before deadline.
-    // Reject only if start or end lands in the hard blackout (3 AM – 7 AM).
     const startBeforeDl   = new Date(dl.getTime() - estimatedMinutes * 60_000);
     const startH          = localHourIn(startBeforeDl, timezone);
     const dlH             = localHourIn(dl, timezone);
-    const startInBlackout = startH >= LATE_NIGHT_MAX_HOUR && startH < WORK_START_HOUR;
-    const endInBlackout   = dlH   >= LATE_NIGHT_MAX_HOUR && dlH   < WORK_START_HOUR;
+    const startInBlackout = startH >= wh.workEndLateHour && startH < wh.workStartHour;
+    const endInBlackout2  = dlH   >= wh.workEndLateHour && dlH   < wh.workStartHour;
     const hasConflict     = sorted.some((iv) => iv.start < dl && iv.end > startBeforeDl);
-    if (startBeforeDl > now && !startInBlackout && !endInBlackout && !hasConflict) {
+    if (startBeforeDl > now && !startInBlackout && !endInBlackout2 && !hasConflict) {
       console.log(`[fallbackSchedule] ✅ (pre-deadline) ${startBeforeDl.toISOString()} (local ${startH.toFixed(1)}h)`);
       return {
         scheduled_start: startBeforeDl.toISOString(),
@@ -205,8 +206,8 @@ export interface FreeBlock {
 
 /**
  * Returns all schedulable free blocks >= minMinutes within [from, to].
- * Respects the scheduling window: strips the 3 AM–8 AM blackout from every gap.
- * A gap that spans the blackout is split into sub-blocks before 3 AM and after 8 AM.
+ * Respects the scheduling window: strips the blackout from every gap.
+ * A gap that spans the blackout is split into sub-blocks.
  */
 export function findFreeBlocksInWindow(
   busyIntervals: BusyInterval[],
@@ -214,8 +215,10 @@ export function findFreeBlocksInWindow(
   to: Date,
   minMinutes: number,
   timezone: string,
+  workHours: WorkHours = DEFAULT_WORK_HOURS,
 ): FreeBlock[] {
   if (from >= to) return [];
+  const wh = workHours;
 
   // Clip busy intervals to [from, to] and sort
   const clipped = busyIntervals
@@ -247,7 +250,7 @@ export function findFreeBlocksInWindow(
   }
   if (cursor < to) gaps.push({ start: cursor, end: to });
 
-  // For each gap, extract valid sub-blocks respecting the 3 AM–8 AM blackout
+  // For each gap, extract valid sub-blocks respecting the blackout
   const freeBlocks: FreeBlock[] = [];
 
   for (const gap of gaps) {
@@ -259,18 +262,16 @@ export function findFreeBlocksInWindow(
       const h = localHourIn(subCursor, timezone);
 
       // Snap out of blackout
-      if (h >= LATE_NIGHT_MAX_HOUR && h < WORK_START_HOUR) {
-        subCursor = localTimeOnDay(subCursor, WORK_START_HOUR, 0, timezone, 0);
+      if (h >= wh.workEndLateHour && h < wh.workStartHour) {
+        subCursor = localTimeOnDay(subCursor, wh.workStartHour, 0, timezone, 0);
         continue;
       }
 
-      // Determine end of current valid window (next 3 AM boundary)
-      // 0–2:59 AM → 3 AM same day (dayOffset=0)
-      // 8 AM–midnight → 3 AM next day (dayOffset=1)
+      // Determine end of current valid window (next late-hour boundary)
       const validWindowEnd: Date =
-        h < LATE_NIGHT_MAX_HOUR
-          ? localTimeOnDay(subCursor, LATE_NIGHT_MAX_HOUR, 0, timezone, 0)
-          : localTimeOnDay(subCursor, LATE_NIGHT_MAX_HOUR, 0, timezone, 1);
+        h < wh.workEndLateHour
+          ? localTimeOnDay(subCursor, wh.workEndLateHour, 0, timezone, 0)
+          : localTimeOnDay(subCursor, wh.workEndLateHour, 0, timezone, 1);
 
       const blockEnd = new Date(Math.min(validWindowEnd.getTime(), gap.end.getTime()));
       const durationMinutes = (blockEnd.getTime() - subCursor.getTime()) / 60_000;
@@ -279,8 +280,8 @@ export function findFreeBlocksInWindow(
         freeBlocks.push({ start: new Date(subCursor), end: new Date(blockEnd), durationMinutes });
       }
 
-      // Advance past the 3 AM–8 AM blackout to next 8 AM
-      subCursor = localTimeOnDay(validWindowEnd, WORK_START_HOUR, 0, timezone, 0);
+      // Advance past the blackout to next workStartHour
+      subCursor = localTimeOnDay(validWindowEnd, wh.workStartHour, 0, timezone, 0);
     }
   }
 

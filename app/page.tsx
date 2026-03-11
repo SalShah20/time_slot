@@ -517,6 +517,12 @@ export default function Home() {
                     )}
                   </div>
                   <a
+                    href="/settings"
+                    className="block w-full text-left px-3 py-2 text-sm text-surface-700 hover:bg-surface-50 transition-colors"
+                  >
+                    Settings
+                  </a>
+                  <a
                     href="https://docs.google.com/forms/d/e/1FAIpQLSdM2TcREpoBKsCaZvx6M34kkFYZsyIQboAa7KJWTBOmvRAMpw/viewform?usp=sharing&ouid=116951976494925303286"
                     target="_blank"
                     rel="noopener noreferrer"

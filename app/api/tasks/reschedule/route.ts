@@ -3,6 +3,7 @@ import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 import { getCalendarClient, deleteCalendarEvent, getTimeSlotCalendarId, getPriorityColorId } from '@/lib/googleCalendar';
 import { fallbackSchedule, localTimeOnDay } from '@/lib/scheduleUtils';
 import type { BusyInterval } from '@/lib/scheduleUtils';
+import { fetchWorkHours } from '@/lib/workHours';
 
 function overlaps(
   taskStart: Date,
@@ -36,6 +37,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const supabase = createSupabaseServer();
+    const wh = await fetchWorkHours(supabase, user.id);
 
     const now = new Date();
     // Look back 7 days so past-due pending tasks (still unstarted) are also rescheduled.
@@ -140,6 +142,7 @@ export async function POST(req: NextRequest) {
           task.estimated_minutes ?? 30,
           task.deadline,
           timezone,
+          wh,
         );
 
         // If the best available slot is after the task's deadline, flag it instead of rescheduling

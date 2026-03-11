@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 import { getCalendarClient, fetchCalendarEventsForDay, getOrCreateTimeSlotCalendar, getPriorityColorId } from '@/lib/googleCalendar';
 import { fallbackSchedule, localHourIn, localDateStrIn } from '@/lib/scheduleUtils';
-import type { BusyInterval } from '@/lib/scheduleUtils';
+import type { BusyInterval, WorkHours } from '@/lib/scheduleUtils';
+import { DEFAULT_WORK_HOURS } from '@/lib/scheduleUtils';
 import { estimateDurationWithLLM } from '@/lib/estimateDuration';
 import { fetchUserTimingHistory } from '@/lib/timingHistory';
 import { computeSplitSessions } from '@/lib/splitSchedule';
 import { guessTagWithLLM } from '@/lib/guessTag';
 import type { SplitSession } from '@/lib/splitSchedule';
+import { fetchWorkHours, formatHourForPrompt } from '@/lib/workHours';
 
 interface TaskInput {
   title: string;
@@ -105,13 +107,14 @@ async function scheduleBatchWithLLM(
   tasks: TaskInput[],
   existingBusy: BusyInterval[],
   timezone: string,
+  wh: WorkHours = DEFAULT_WORK_HOURS,
 ): Promise<ScheduledTask[]> {
   const now = new Date();
   const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey) {
     console.warn('[scheduleBatchWithLLM] OPENAI_API_KEY not set — using fallback for all tasks');
-    return scheduleSequentialFallback(tasks, existingBusy, timezone);
+    return scheduleSequentialFallback(tasks, existingBusy, timezone, wh);
   }
 
   const localTime = new Intl.DateTimeFormat('en-US', {
@@ -140,7 +143,7 @@ EXISTING BUSY INTERVALS (tasks + calendar events):
 ${JSON.stringify(busyForPrompt)}
 
 RULES:
-1. Preferred window: 8 AM – 11 PM in the user's local timezone (${timezone}). If the day is fully packed and a deadline requires it, extending into the 11 PM – 3 AM window is acceptable as a last resort. Never schedule between 3 AM and 8 AM under any circumstances.
+1. Preferred window: ${formatHourForPrompt(wh.workStartHour)} – ${formatHourForPrompt(wh.workEndHour)} in the user's local timezone (${timezone}). If the day is fully packed and a deadline requires it, extending up to ${formatHourForPrompt(wh.workEndLateHour)} is acceptable as a last resort. Never schedule between ${formatHourForPrompt(wh.workEndLateHour)} and ${formatHourForPrompt(wh.workStartHour)} under any circumstances.
 2. Each task's end time MUST be before or at its deadline
 3. Tasks due sooner should generally be scheduled sooner
 4. No overlaps between tasks being scheduled, or with existing busy intervals
@@ -193,7 +196,7 @@ Respond ONLY with a JSON array (no extra text):
 
       if (!slot?.scheduled_start) {
         console.warn(`[scheduleBatchWithLLM] No slot returned for task ${i} ("${task.title}") — falling back`);
-        const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline, timezone);
+        const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline, timezone, wh);
         allBusy.push({ start: new Date(fb.scheduled_start), end: new Date(fb.scheduled_end) });
         results.push({ ...task, ...fb });
         continue;
@@ -202,7 +205,7 @@ Respond ONLY with a JSON array (no extra text):
       const scheduledStart = new Date(slot.scheduled_start);
       if (isNaN(scheduledStart.getTime())) {
         console.warn(`[scheduleBatchWithLLM] Invalid start for task ${i} — falling back`);
-        const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline, timezone);
+        const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline, timezone, wh);
         allBusy.push({ start: new Date(fb.scheduled_start), end: new Date(fb.scheduled_end) });
         results.push({ ...task, ...fb });
         continue;
@@ -216,12 +219,12 @@ Respond ONLY with a JSON array (no extra text):
       const endH          = localHourIn(scheduledEnd, timezone);
       const crossDay      = new Intl.DateTimeFormat('sv', { timeZone: timezone }).format(scheduledEnd) !==
                             new Intl.DateTimeFormat('sv', { timeZone: timezone }).format(scheduledStart);
-      const startBlackout = startH >= 3 && startH < 7;
-      const endBlackout   = endH   >= 3 && endH   < 7;
-      const endCrossesDay = crossDay && endH >= 7;
+      const startBlackout = startH >= wh.workEndLateHour && startH < wh.workStartHour;
+      const endBlackout   = endH   >= wh.workEndLateHour && endH   < wh.workStartHour;
+      const endCrossesDay = crossDay && endH >= wh.workStartHour;
       if (startBlackout || endBlackout || endCrossesDay) {
         console.warn(`[scheduleBatchWithLLM] LLM returned out-of-hours time ${scheduledStart.toISOString()} for task ${i} ("${task.title}") — falling back`);
-        const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline, timezone);
+        const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline, timezone, wh);
         allBusy.push({ start: new Date(fb.scheduled_start), end: new Date(fb.scheduled_end) });
         results.push({ ...task, ...fb });
         continue;
@@ -238,7 +241,7 @@ Respond ONLY with a JSON array (no extra text):
           const hasOverlapAfterClamp = allBusy.some((iv) => iv.start < finalEnd && iv.end > finalStart);
           if (hasOverlapAfterClamp) {
             console.warn(`[scheduleBatchWithLLM] Clamped slot overlaps for task ${i} ("${task.title}") — falling back`);
-            const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline, timezone);
+            const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline, timezone, wh);
             allBusy.push({ start: new Date(fb.scheduled_start), end: new Date(fb.scheduled_end) });
             results.push({ ...task, ...fb });
           } else {
@@ -257,7 +260,7 @@ Respond ONLY with a JSON array (no extra text):
       const hasOverlap = allBusy.some((iv) => iv.start < scheduledEnd && iv.end > scheduledStart);
       if (hasOverlap) {
         console.warn(`[scheduleBatchWithLLM] LLM result overlaps for task ${i} ("${task.title}") — falling back`);
-        const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline, timezone);
+        const fb = fallbackSchedule(allBusy, task.estimatedMinutes, task.deadline, timezone, wh);
         allBusy.push({ start: new Date(fb.scheduled_start), end: new Date(fb.scheduled_end) });
         results.push({ ...task, ...fb });
         continue;
@@ -275,15 +278,15 @@ Respond ONLY with a JSON array (no extra text):
     return results;
   } catch (err) {
     console.error('[scheduleBatchWithLLM] LLM error, falling back for all tasks:', err);
-    return scheduleSequentialFallback(tasks, existingBusy, timezone);
+    return scheduleSequentialFallback(tasks, existingBusy, timezone, wh);
   }
 }
 
 /** Fallback: schedule each task sequentially with the deterministic algorithm. */
-function scheduleSequentialFallback(tasks: TaskInput[], initialBusy: BusyInterval[], timezone: string): ScheduledTask[] {
+function scheduleSequentialFallback(tasks: TaskInput[], initialBusy: BusyInterval[], timezone: string, wh: WorkHours = DEFAULT_WORK_HOURS): ScheduledTask[] {
   const busy = [...initialBusy];
   return tasks.map((task) => {
-    const slot = fallbackSchedule(busy, task.estimatedMinutes, task.deadline, timezone);
+    const slot = fallbackSchedule(busy, task.estimatedMinutes, task.deadline, timezone, wh);
     busy.push({ start: new Date(slot.scheduled_start), end: new Date(slot.scheduled_end) });
     return { ...task, ...slot };
   });
@@ -311,6 +314,7 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createSupabaseServer();
+  const wh = await fetchWorkHours(supabase, user.id);
 
   try {
   // Fetch timing history once — shared across all duration estimates in this batch
@@ -382,7 +386,7 @@ export async function POST(req: NextRequest) {
 
   // Schedule auto tasks together (one LLM call); merge with pre-scheduled fixed tasks
   const autoScheduled = sortedTasks.length > 0
-    ? await scheduleBatchWithLLM(sortedTasks, existingBusy, timezone)
+    ? await scheduleBatchWithLLM(sortedTasks, existingBusy, timezone, wh)
     : [];
   const scheduled = [...fixedScheduled, ...autoScheduled];
   // Retain reference to existingBusy for applyBatchSplitting below.
@@ -437,6 +441,7 @@ export async function POST(req: NextRequest) {
                 scheduled[i].estimatedMinutes,
                 scheduled[i].deadline,
                 timezone,
+                wh,
               );
               scheduled[i] = { ...scheduled[i], ...fb };
             }

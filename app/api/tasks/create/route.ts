@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 import { getCalendarClient, fetchCalendarEventsForDay, getOrCreateTimeSlotCalendar, getPriorityColorId } from '@/lib/googleCalendar';
 import { fallbackSchedule, localHourIn, localDateStrIn } from '@/lib/scheduleUtils';
-import type { BusyInterval } from '@/lib/scheduleUtils';
+import type { BusyInterval, WorkHours } from '@/lib/scheduleUtils';
+import { DEFAULT_WORK_HOURS } from '@/lib/scheduleUtils';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { estimateDurationWithLLM } from '@/lib/estimateDuration';
 import { fetchUserTimingHistory } from '@/lib/timingHistory';
 import { computeSplitSessions } from '@/lib/splitSchedule';
 import { guessTagWithLLM } from '@/lib/guessTag';
+import { fetchWorkHours, formatHourForPrompt } from '@/lib/workHours';
 
 /** LLM-powered smart scheduler using GPT-4o-mini. Falls back to simple scheduling on any error. */
 async function scheduleWithLLM(
@@ -22,6 +24,7 @@ async function scheduleWithLLM(
     priority?: string;
   },
   timezone: string,
+  wh: WorkHours = DEFAULT_WORK_HOURS,
 ): Promise<{ scheduled_start: string; scheduled_end: string; busyIntervals: BusyInterval[] }> {
   const now        = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
@@ -64,7 +67,7 @@ async function scheduleWithLLM(
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     console.warn('[scheduleWithLLM] OPENAI_API_KEY not set — using fallback');
-    return { ...fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone), busyIntervals };
+    return { ...fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone, wh), busyIntervals };
   }
 
   const localTime = new Intl.DateTimeFormat('en-US', {
@@ -85,7 +88,7 @@ CALENDAR EVENTS (today & tomorrow):
 ${JSON.stringify(calEvents ?? [])}
 
 RULES:
-1. Preferred window: 8 AM – 11 PM in the user's local timezone (${timezone}). If the day is fully packed and a deadline requires it, extending into the 11 PM – 3 AM window is acceptable as a last resort. Never schedule between 3 AM and 8 AM under any circumstances.
+1. Preferred window: ${formatHourForPrompt(wh.workStartHour)} – ${formatHourForPrompt(wh.workEndHour)} in the user's local timezone (${timezone}). If the day is fully packed and a deadline requires it, extending up to ${formatHourForPrompt(wh.workEndLateHour)} is acceptable as a last resort. Never schedule between ${formatHourForPrompt(wh.workEndLateHour)} and ${formatHourForPrompt(wh.workStartHour)} under any circumstances.
 2. Task end time MUST be before or at deadline
 3. If deadline is today, schedule ASAP — do not push to tomorrow
 4. Avoid overlapping existing tasks and calendar events
@@ -136,13 +139,13 @@ Respond ONLY with this JSON (no extra text):
     const endH          = localHourIn(scheduledEnd, timezone);
     const crossDay      = new Intl.DateTimeFormat('sv', { timeZone: timezone }).format(scheduledEnd) !==
                           new Intl.DateTimeFormat('sv', { timeZone: timezone }).format(scheduledStart);
-    const startBlackout = startH >= 3 && startH < 8;
-    const endBlackout   = endH   >= 3 && endH   < 8;
-    // End crosses into next-day daytime (8 AM+) — too far out.
-    const endCrossesDay = crossDay && endH >= 8;
+    const startBlackout = startH >= wh.workEndLateHour && startH < wh.workStartHour;
+    const endBlackout   = endH   >= wh.workEndLateHour && endH   < wh.workStartHour;
+    // End crosses into next-day daytime — too far out.
+    const endCrossesDay = crossDay && endH >= wh.workStartHour;
     if (startBlackout || endBlackout || endCrossesDay) {
       console.warn(`[scheduleWithLLM] LLM returned out-of-hours time ${scheduledStart.toISOString()} for "${task.title}" — falling back`);
-      return { ...fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone), busyIntervals };
+      return { ...fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone, wh), busyIntervals };
     }
 
     // Safety: never schedule end past deadline
@@ -169,7 +172,7 @@ Respond ONLY with this JSON (no extra text):
       console.warn(
         '[scheduleWithLLM] LLM result overlaps existing schedule for "' + task.title + '" — falling back to deterministic scheduler',
       );
-      return { ...fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone), busyIntervals };
+      return { ...fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone, wh), busyIntervals };
     }
 
     return {
@@ -179,7 +182,7 @@ Respond ONLY with this JSON (no extra text):
     };
   } catch (err) {
     console.error('[scheduleWithLLM] Error, falling back to simple scheduler:', err);
-    return { ...fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone), busyIntervals };
+    return { ...fallbackSchedule(busyIntervals, task.estimatedMinutes, task.deadline, timezone, wh), busyIntervals };
   }
 }
 
@@ -217,6 +220,7 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createSupabaseServer();
+  const wh = await fetchWorkHours(supabase, user.id);
 
   // If no tag supplied, guess it from the title/description
   const finalTag = tag ?? await guessTagWithLLM(title, description);
@@ -243,6 +247,7 @@ export async function POST(req: NextRequest) {
       user.id,
       { title, description, estimatedMinutes: finalEstimatedMinutes, tag: finalTag ?? undefined, deadline, priority },
       timezone,
+      wh,
     );
     finalScheduledStart = result.scheduled_start;
     finalScheduledEnd   = result.scheduled_end;
@@ -266,7 +271,7 @@ export async function POST(req: NextRequest) {
           if (hasOverlap) {
             console.warn(`[/api/tasks/create] Slot on ${scheduledDay} conflicts with a live GCal event — rescheduling`);
             const augmented = [...initialBusy, ...liveEvents];
-            const fb = fallbackSchedule(augmented, finalEstimatedMinutes, deadline, timezone);
+            const fb = fallbackSchedule(augmented, finalEstimatedMinutes, deadline, timezone, wh);
             finalScheduledStart = fb.scheduled_start;
             finalScheduledEnd   = fb.scheduled_end;
           }
