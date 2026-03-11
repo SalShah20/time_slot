@@ -26,8 +26,8 @@ OPENAI_API_KEY=                    # for LLM-powered scheduling (GPT-4o-mini)
 
 ## Authentication
 
-Supabase Auth with Google OAuth. `middleware.ts` protects all routes — unauthenticated users are redirected to `/login`. The auth flow is:
-1. `/login` — Google sign-in button
+Supabase Auth with Google OAuth. `middleware.ts` protects all routes — unauthenticated users are redirected to `/login`. Public (unauthenticated) routes: `/login`, `/signup`, `/auth/callback`, `/privacy`, `/terms`. The auth flow is:
+1. `/login` — Google sign-in button (footer links to Privacy Policy + Terms of Service)
 2. `/auth/callback` — Supabase OAuth code exchange, then redirect to `/`
 
 Server-side: use `getAuthUser()` from `lib/supabase-server.ts` in API routes. It returns the authenticated user or `null`. All DB queries are scoped to `user.id`.
@@ -41,7 +41,7 @@ Client-side: `supabase.auth.getSession()` + `onAuthStateChange` in `app/page.tsx
 ### Page layout (`app/page.tsx`)
 
 Full-screen layout:
-1. **Header** — logo, Google Calendar status button (connect/sync/reconnect), beta "Feedback Form" link (amber, opens Google Form in new tab), "Start Timer" button, user avatar/menu
+1. **Header** — logo, Google Calendar status button (connect/sync/reconnect), beta "Feedback Form" link (amber, opens Google Form in new tab), "Start Timer" button, user avatar/menu (dropdown includes Privacy + Terms links)
 2. **Stats bar** — `StatsCards` polls `/api/tasks/stats` every 30s
 3. **Two-column main** — left: upcoming task list with quick-complete checkmarks; right: `ScheduleView` (hourly calendar with task blocks and GCal event overlays)
 4. **FAB** (`+` button, bottom-right) — opens `TaskDrawer`
@@ -197,9 +197,11 @@ Use `teal-600` / `hover:teal-700` for primary buttons. Use `surface-*` for all n
 | File | Purpose |
 |------|---------|
 | `app/page.tsx` | Main dashboard, calendar sync loop, notification setup, per-date blocks cache |
-| `app/login/page.tsx` | Google sign-in page |
+| `app/login/page.tsx` | Google sign-in page (footer links to privacy/terms) |
+| `app/privacy/page.tsx` | Privacy Policy (public, no auth required) |
+| `app/terms/page.tsx` | Terms of Service (public, no auth required) |
 | `app/auth/callback/route.ts` | Supabase OAuth code exchange |
-| `middleware.ts` | Auth guard — redirects unauthenticated to `/login` |
+| `middleware.ts` | Auth guard — redirects unauthenticated to `/login`; exempts `/privacy`, `/terms` |
 | `app/api/tasks/create/route.ts` | LLM scheduling + GCal event creation |
 | `app/api/tasks/batch-create/route.ts` | Batch scheduling (one LLM call for N tasks) |
 | `app/api/tasks/reschedule/route.ts` | Conflict detection + GCal event replace |
@@ -260,6 +262,16 @@ Configured via `@ducanh2912/next-pwa` in `next.config.mjs`:
 - Both LLM prompts (create and batch-create) say "preferred 8 AM–11 PM; last resort up to 3 AM; never 3 AM–8 AM"
 - `fallbackSchedule()` snaps any candidate in the 3–8 AM blackout forward to 8 AM via `snapToWorkHours()`
 - LLM validation in `create/route.ts` rejects starts/ends in 3–8 AM; rejects cross-day ends at 8 AM+; allows midnight–3 AM
+
+## Legal pages
+
+Public (no auth required) pages for Google OAuth verification:
+- `/privacy` (`app/privacy/page.tsx`) — Privacy Policy; covers data collection, Google API scope (`auth/calendar`), third-party services (Supabase, Google, OpenAI), Google API Services User Data Policy / Limited Use compliance, data retention + deletion, children's privacy
+- `/terms` (`app/terms/page.tsx`) — Terms of Service; covers service description, Google Calendar authorization, AI-powered features, acceptable use, liability, termination
+
+Links to these pages appear in:
+1. Login page footer (below the sign-in card)
+2. User avatar dropdown menu in the main app header
 
 ## Planned / future work
 

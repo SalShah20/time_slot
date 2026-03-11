@@ -10,6 +10,7 @@ A task scheduling and timer app for college students. Add tasks, let the LLM sch
 - Focus timer with work/break tracking and session history
 - Scheduling respects deadlines: preferred window is 7 AM – 11 PM, but tasks can be placed up to 3 AM as a last resort when earlier slots are full (college students work late)
 - Browser notifications for upcoming tasks, deadline warnings, and a morning summary
+- Privacy Policy and Terms of Service pages (public, no auth required) for Google OAuth verification
 
 ## Setup
 
@@ -85,6 +86,10 @@ Tasks are scheduled by GPT-4o-mini using the existing calendar and task context.
 - Hard blackout: 3 AM – 7 AM (never scheduled)
 
 The fallback algorithm walks forward from now+10 minutes, skipping over busy intervals, and falls back to 7 AM the following day only when no slot exists through 3 AM.
+
+## Legal pages
+
+Public pages (accessible without login) at `/privacy` and `/terms`, required for Google OAuth verification. Links appear on the login page footer and in the user avatar dropdown menu. The privacy policy covers Google API scope (`auth/calendar`), data handling, and Google API Services User Data Policy / Limited Use compliance.
 
 ## Architecture overview
 

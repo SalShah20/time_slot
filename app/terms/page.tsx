@@ -140,9 +140,9 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-xl font-semibold text-surface-900 mb-3">13. Contact</h2>
             <p>
-              If you have questions about these Terms of Service, please contact us at{" "}
-              <a href="mailto:isalonishah@gmail.com" className="text-teal-600 hover:underline">
-                isalonishah@gmail.com
+              If you have questions about these Terms of Service, please contact us through{" "}
+              <a href="https://salonishah.net" className="text-teal-600 hover:underline" target="_blank" rel="noopener noreferrer">
+                salonishah.net
               </a>.
             </p>
           </section>
