@@ -141,8 +141,8 @@ export default function TermsOfService() {
             <h2 className="text-xl font-semibold text-surface-900 mb-3">13. Contact</h2>
             <p>
               If you have questions about these Terms of Service, please contact us at{" "}
-              <a href="mailto:support@timeslot.app" className="text-teal-600 hover:underline">
-                support@timeslot.app
+              <a href="mailto:isalonishah@gmail.com" className="text-teal-600 hover:underline">
+                isalonishah@gmail.com
               </a>.
             </p>
           </section>

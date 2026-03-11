@@ -179,8 +179,8 @@ export default function PrivacyPolicy() {
             <p>
               If you have questions about this Privacy Policy or wish to exercise your data rights,
               please contact us at{" "}
-              <a href="mailto:support@timeslot.app" className="text-teal-600 hover:underline">
-                support@timeslot.app
+              <a href="mailto:isalonishah@gmail.com" className="text-teal-600 hover:underline">
+                isalonishah@gmail.com
               </a>.
             </p>
           </section>
