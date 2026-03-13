@@ -85,6 +85,7 @@ export interface TimerSessionRow {
 // ─── Stats returned on task completion ───────────────────────────────────────
 
 export interface CompletionStats {
+  taskId: string;
   taskTitle: string;
   estimatedMinutes: number;
   actualWorkSeconds: number;

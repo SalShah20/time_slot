@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { TaskRow } from '@/types/timer';
 import * as timer from '@/lib/timerService';
+import { getTagColor } from '@/lib/tagColors';
 
 interface Props {
   tasks: TaskRow[];
@@ -10,18 +11,20 @@ interface Props {
   onClose: () => void;
 }
 
-const TAG_ICONS: Record<string, string> = {
-  Classes: '📚',
-  Work: '💼',
-  Personal: '🏠',
-  Other: '📌',
+const PRIORITY_STYLES: Record<string, { label: string; cls: string }> = {
+  urgent: { label: 'Urgent', cls: 'bg-red-100 text-red-700' },
+  high:   { label: 'High',   cls: 'bg-red-50 text-red-600' },
+  medium: { label: 'Medium', cls: 'bg-amber-50 text-amber-700' },
+  low:    { label: 'Low',    cls: 'bg-surface-100 text-surface-600' },
 };
 
-const PRIORITY_COLORS: Record<string, string> = {
-  low:    'text-green-600',
-  medium: 'text-amber-500',
-  high:   'text-red-500',
-};
+function formatTimeRange(start: string | null, end: string | null): string | null {
+  if (!start) return null;
+  const fmt = (iso: string) =>
+    new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  if (end) return `${fmt(start)} – ${fmt(end)}`;
+  return fmt(start);
+}
 
 export default function TimerSelector({ tasks, onStarted, onClose }: Props) {
   const [selectedId, setSelectedId] = useState<string>('');
@@ -68,39 +71,50 @@ export default function TimerSelector({ tasks, onStarted, onClose }: Props) {
           </p>
         ) : (
           <div className="space-y-2 mb-5 max-h-72 overflow-y-auto">
-            {pendingTasks.map((task) => (
-              <label
-                key={task.id}
-                className={`flex items-center gap-3 p-3 border rounded-xl cursor-pointer transition-colors ${
-                  selectedId === task.id
-                    ? 'border-teal-500 bg-teal-50'
-                    : 'border-surface-200 hover:border-surface-300 hover:bg-surface-50'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="task-select"
-                  value={task.id}
-                  checked={selectedId === task.id}
-                  onChange={() => setSelectedId(task.id)}
-                  className="accent-teal-600"
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    {task.tag && <span className="text-sm">{TAG_ICONS[task.tag] ?? ''}</span>}
+            {pendingTasks.map((task) => {
+              const tagColor = task.tag ? getTagColor(task.tag) : null;
+              const timeRange = formatTimeRange(task.scheduled_start, task.scheduled_end);
+              const priority = task.priority ? PRIORITY_STYLES[task.priority] : null;
+
+              return (
+                <label
+                  key={task.id}
+                  className={`flex items-start gap-3 p-3 border rounded-xl cursor-pointer transition-colors ${
+                    selectedId === task.id
+                      ? 'border-teal-500 bg-teal-50'
+                      : 'border-surface-200 hover:border-surface-300 hover:bg-surface-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="task-select"
+                    value={task.id}
+                    checked={selectedId === task.id}
+                    onChange={() => setSelectedId(task.id)}
+                    className="accent-teal-600 mt-1"
+                  />
+                  <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-surface-900 truncate">{task.title}</p>
-                  </div>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-xs text-surface-400">{task.estimated_minutes}m est.</span>
-                    {task.priority && (
-                      <span className={`text-xs font-medium capitalize ${PRIORITY_COLORS[task.priority]}`}>
-                        {task.priority}
-                      </span>
+                    {timeRange && (
+                      <p className="text-xs text-surface-400 mt-0.5">{timeRange}</p>
                     )}
+                    <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                      {tagColor && task.tag && (
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${tagColor.bg} ${tagColor.text}`}>
+                          {task.tag}
+                        </span>
+                      )}
+                      {priority && (
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${priority.cls}`}>
+                          {priority.label}
+                        </span>
+                      )}
+                      <span className="text-xs text-surface-400">{task.estimated_minutes}m est.</span>
+                    </div>
                   </div>
-                </div>
-              </label>
-            ))}
+                </label>
+              );
+            })}
           </div>
         )}
 
@@ -119,7 +133,7 @@ export default function TimerSelector({ tasks, onStarted, onClose }: Props) {
             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
               <path d="M8 5v14l11-7z" />
             </svg>
-            {starting ? 'Starting…' : 'Start Working'}
+            {starting ? 'Starting...' : 'Start Working'}
           </button>
         </div>
       </div>

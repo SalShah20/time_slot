@@ -62,24 +62,46 @@ function formatTime(seconds: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-function progressPercent(workElapsed: number, estimatedMinutes: number): number {
-  const total = estimatedMinutes * 60;
-  return Math.min(100, Math.round((workElapsed / total) * 100));
+function formatBreakMinutes(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  return `${m}m`;
 }
 
-function StateDot({ state }: { state: TimerDisplayState['timerState'] }) {
-  const color =
-    state === 'WORKING'  ? 'bg-teal-500'    :
-    state === 'PAUSED'   ? 'bg-amber-400'   :
-    state === 'ON_BREAK' ? 'bg-purple-500'  : 'bg-surface-400';
+// ─── Circular progress ring ──────────────────────────────────────────────────
 
+const RING_SIZE = 64;
+const RING_STROKE = 4;
+const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+
+function ProgressRing({ percent, color }: { percent: number; color: string }) {
+  const offset = RING_CIRCUMFERENCE - (Math.min(percent, 100) / 100) * RING_CIRCUMFERENCE;
   return (
-    <span className="relative flex h-2.5 w-2.5">
-      {state === 'WORKING' && (
-        <span className={`animate-pulse-ring absolute inline-flex h-full w-full rounded-full ${color} opacity-75`} />
-      )}
-      <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${color}`} />
-    </span>
+    <svg width={RING_SIZE} height={RING_SIZE} className="flex-shrink-0 -rotate-90">
+      {/* Background track */}
+      <circle
+        cx={RING_SIZE / 2}
+        cy={RING_SIZE / 2}
+        r={RING_RADIUS}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={RING_STROKE}
+        className="text-surface-100"
+      />
+      {/* Filled arc */}
+      <circle
+        cx={RING_SIZE / 2}
+        cy={RING_SIZE / 2}
+        r={RING_RADIUS}
+        fill="none"
+        stroke={color}
+        strokeWidth={RING_STROKE}
+        strokeLinecap="round"
+        strokeDasharray={RING_CIRCUMFERENCE}
+        strokeDashoffset={offset}
+        className="transition-[stroke-dashoffset] duration-1000 ease-linear"
+      />
+    </svg>
   );
 }
 
@@ -105,59 +127,71 @@ export default function CornerTimerWidget({ onComplete, onTimerFinish }: Props) 
   // Only render when a timer is active
   if (!display) return null;
 
-  const { timerState, taskTitle, estimatedMinutes, workElapsedSeconds, breakElapsedSeconds } = display;
-  const pct = progressPercent(workElapsedSeconds, estimatedMinutes);
+  const { timerState, taskTitle, estimatedMinutes, workElapsedSeconds, breakElapsedSeconds, totalBreakSeconds } = display;
+  const pct = Math.min(100, Math.round((workElapsedSeconds / (estimatedMinutes * 60)) * 100));
   const overTime = workElapsedSeconds > estimatedMinutes * 60;
+
   const stateLabel =
-    timerState === 'WORKING' ? 'Working' :
-    timerState === 'PAUSED'  ? 'Paused'  : 'On Break';
+    timerState === 'WORKING'  ? 'Focusing' :
+    timerState === 'PAUSED'   ? 'Paused'   : 'On break';
+
+  const stateTextColor =
+    timerState === 'WORKING'  ? 'text-teal-600' :
+    timerState === 'PAUSED'   ? 'text-surface-400' : 'text-amber-500';
+
+  const borderColor =
+    timerState === 'WORKING'  ? 'border-teal-500' :
+    timerState === 'PAUSED'   ? 'border-surface-300' : 'border-amber-400';
+
+  const ringColor =
+    timerState === 'ON_BREAK' ? '#fbbf24' : // amber-400
+    overTime                  ? '#ef4444' : // red-500
+                                '#027381';  // teal-600
+
+  const displayedSeconds = timerState === 'ON_BREAK' ? breakElapsedSeconds : workElapsedSeconds;
 
   return (
-    <div className="fixed bottom-6 right-6 z-40 w-72 max-md:w-[calc(100vw-3rem)] bg-white rounded-2xl shadow-2xl border border-surface-200 p-4">
-      {/* Status row */}
-      <div className="flex items-center gap-2 mb-2">
-        <StateDot state={timerState} />
-        <span className="text-xs font-semibold text-surface-500 uppercase tracking-wide">{stateLabel}</span>
-      </div>
+    <div className={`fixed bottom-6 max-md:bottom-20 right-6 z-40 w-72 max-md:w-[calc(100vw-3rem)] bg-white rounded-2xl shadow-2xl border border-surface-200 border-t-2 ${borderColor} overflow-hidden`}>
+      <div className="p-4">
+        {/* Task title */}
+        <p className="text-xs font-medium text-surface-500 truncate mb-3" title={taskTitle}>
+          {taskTitle.length > 20 ? taskTitle.slice(0, 20) + '...' : taskTitle}
+        </p>
 
-      {/* Task title */}
-      <p className="text-sm font-bold text-surface-900 truncate mb-3" title={taskTitle}>
-        {taskTitle}
-      </p>
-
-      {/* Timer + progress */}
-      <div className="flex items-center gap-3 mb-3">
-        <span className={`text-xl font-mono font-bold tabular-nums ${overTime ? 'text-red-500' : 'text-teal-600'}`}>
-          {timerState === 'ON_BREAK' ? formatTime(breakElapsedSeconds) : formatTime(workElapsedSeconds)}
-        </span>
-        <div className="flex-1 bg-surface-100 rounded-full h-1.5 overflow-hidden">
-          <div
-            className={`h-1.5 rounded-full transition-all duration-1000 ${overTime ? 'bg-red-400' : 'bg-teal-500'}`}
-            style={{ width: `${pct}%` }}
-          />
+        {/* Ring + Timer + State */}
+        <div className="flex items-center gap-3 mb-3">
+          <ProgressRing percent={pct} color={ringColor} />
+          <div className="flex-1 min-w-0">
+            <span className={`text-2xl font-mono font-bold tabular-nums block ${overTime && timerState !== 'ON_BREAK' ? 'text-red-500' : 'text-surface-900'}`}>
+              {formatTime(displayedSeconds)}
+            </span>
+            <span className={`text-xs font-semibold ${stateTextColor}`}>{stateLabel}</span>
+            {totalBreakSeconds > 0 && timerState !== 'ON_BREAK' && (
+              <span className="text-xs text-surface-400 ml-2">Break: {formatBreakMinutes(totalBreakSeconds)} taken</span>
+            )}
+          </div>
         </div>
-        <span className="text-xs text-surface-400">{pct}%</span>
-      </div>
 
-      {/* Action buttons */}
-      <div className="flex gap-1.5">
-        {timerState === 'WORKING' && (
-          <>
-            <button onClick={handlePause}      className="flex-1 py-1.5 text-xs font-medium border border-surface-300 rounded-lg hover:bg-surface-50 transition-colors text-surface-700">Pause</button>
-            <button onClick={handleStartBreak} className="flex-1 py-1.5 text-xs font-medium border border-purple-300 text-purple-700 rounded-lg hover:bg-purple-50 transition-colors">Break</button>
-            <button onClick={doComplete}        className="flex-1 py-1.5 text-xs font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors">Done</button>
-          </>
-        )}
-        {timerState === 'PAUSED' && (
-          <>
-            <button onClick={handleResume}     className="flex-1 py-1.5 text-xs font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors">Resume</button>
-            <button onClick={handleStartBreak} className="flex-1 py-1.5 text-xs font-medium border border-purple-300 text-purple-700 rounded-lg hover:bg-purple-50 transition-colors">Break</button>
-            <button onClick={doComplete}        className="flex-1 py-1.5 text-xs font-medium border border-surface-300 text-surface-700 rounded-lg hover:bg-surface-50 transition-colors">Done</button>
-          </>
-        )}
-        {timerState === 'ON_BREAK' && (
-          <button onClick={handleEndBreak} className="flex-1 py-1.5 text-xs font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors">End Break</button>
-        )}
+        {/* Action buttons */}
+        <div className="flex gap-1.5">
+          {timerState === 'WORKING' && (
+            <>
+              <button onClick={handlePause}      className="flex-1 py-1.5 text-xs font-medium border border-surface-300 rounded-lg hover:bg-surface-50 transition-colors text-surface-700">Pause</button>
+              <button onClick={handleStartBreak} className="flex-1 py-1.5 text-xs font-medium border border-amber-300 text-amber-700 rounded-lg hover:bg-amber-50 transition-colors">Break</button>
+              <button onClick={doComplete}        className="flex-1 py-1.5 text-xs font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors">Done</button>
+            </>
+          )}
+          {timerState === 'PAUSED' && (
+            <>
+              <button onClick={handleResume}     className="flex-1 py-1.5 text-xs font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors">Resume</button>
+              <button onClick={handleStartBreak} className="flex-1 py-1.5 text-xs font-medium border border-amber-300 text-amber-700 rounded-lg hover:bg-amber-50 transition-colors">Break</button>
+              <button onClick={doComplete}        className="flex-1 py-1.5 text-xs font-medium border border-surface-300 text-surface-700 rounded-lg hover:bg-surface-50 transition-colors">Done</button>
+            </>
+          )}
+          {timerState === 'ON_BREAK' && (
+            <button onClick={handleEndBreak} className="flex-1 py-1.5 text-xs font-medium bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors">End Break</button>
+          )}
+        </div>
       </div>
     </div>
   );

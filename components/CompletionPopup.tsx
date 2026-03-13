@@ -5,21 +5,29 @@ import type { CompletionStats } from '@/types/timer';
 
 type Difficulty = 'harder' | 'right' | 'easy';
 
-function formatTime(seconds: number): string {
+function formatDuration(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h}h`;
+  if (m > 0) return `${m}m`;
+  return `${seconds}s`;
 }
 
-function getMessage(actualWorkSeconds: number, estimatedMinutes: number): string {
-  const ratio = actualWorkSeconds / (estimatedMinutes * 60);
-  if (ratio <= 0.85) return "You finished ahead of schedule — great focus!";
-  if (ratio <= 1.1)  return "Right on time — solid work!";
-  if (ratio <= 1.4)  return "Took a bit longer than planned, but you got it done.";
-  return "This one ran long. Consider breaking similar tasks into smaller chunks.";
+const MOTIVATIONAL: string[] = [
+  'Locked in.',
+  "That's how it's done.",
+  'One down.',
+  'Keep the momentum.',
+  'Good work.',
+];
+
+function hashId(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) {
+    h = (Math.imul(31, h) + id.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
 }
 
 interface Props {
@@ -33,11 +41,8 @@ export default function CompletionPopup({ stats, onDismiss, onStartNewTask }: Pr
 
   if (!stats) return null;
 
-  const { taskTitle, estimatedMinutes, actualWorkSeconds, totalBreakSeconds } = stats;
-  const message = getMessage(actualWorkSeconds, estimatedMinutes);
-  const overTime = actualWorkSeconds > estimatedMinutes * 60;
-  const diff = Math.abs(actualWorkSeconds - estimatedMinutes * 60);
-  const diffLabel = `${Math.round(diff / 60)}m ${overTime ? 'over' : 'under'}`;
+  const { taskId, taskTitle, estimatedMinutes, actualWorkSeconds, totalBreakSeconds } = stats;
+  const motivational = MOTIVATIONAL[hashId(taskId) % 5];
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -50,34 +55,26 @@ export default function CompletionPopup({ stats, onDismiss, onStartNewTask }: Pr
         </div>
 
         <h2 className="text-xl font-bold text-surface-900 mb-1">Task Complete!</h2>
-        <p className="text-surface-500 text-sm mb-5 truncate max-w-full px-4" title={taskTitle}>
+        <p className="text-surface-500 text-sm mb-1 truncate max-w-full px-4" title={taskTitle}>
           {taskTitle}
         </p>
+        <p className="text-sm font-medium text-teal-600 mb-5">{motivational}</p>
 
-        {/* Stats grid */}
+        {/* Session summary */}
         <div className="grid grid-cols-2 gap-3 mb-4">
           <div className="bg-surface-50 rounded-xl p-3">
-            <p className="text-xs text-surface-500 mb-1">Estimated</p>
-            <p className="text-lg font-bold text-surface-800">{estimatedMinutes}m</p>
+            <p className="text-xs text-surface-500 mb-1">Work Time</p>
+            <p className="text-lg font-bold text-surface-800">{formatDuration(actualWorkSeconds)}</p>
           </div>
-          <div className={`rounded-xl p-3 ${overTime ? 'bg-red-50' : 'bg-teal-50'}`}>
-            <p className={`text-xs mb-1 ${overTime ? 'text-red-500' : 'text-teal-600'}`}>Actual Work</p>
-            <p className={`text-lg font-bold ${overTime ? 'text-red-700' : 'text-teal-700'}`}>
-              {formatTime(actualWorkSeconds)}
-            </p>
+          <div className="bg-surface-50 rounded-xl p-3">
+            <p className="text-xs text-surface-500 mb-1">Break Time</p>
+            <p className="text-lg font-bold text-surface-800">{totalBreakSeconds > 0 ? formatDuration(totalBreakSeconds) : '—'}</p>
           </div>
-          {totalBreakSeconds > 0 && (
-            <div className="col-span-2 bg-purple-50 rounded-xl p-3">
-              <p className="text-xs text-purple-600 mb-1">Break Time</p>
-              <p className="text-lg font-bold text-purple-700">{formatTime(totalBreakSeconds)}</p>
-            </div>
-          )}
         </div>
 
-        <p className="text-xs text-surface-400 mb-1">
-          {Math.round(diff / 60) > 0 ? diffLabel : 'Exactly on time'}
+        <p className="text-xs text-surface-400 mb-5">
+          Estimated {estimatedMinutes}m &middot; Actual {formatDuration(actualWorkSeconds)}
         </p>
-        <p className="text-sm text-surface-600 mb-5">{message}</p>
 
         {/* Difficulty rating */}
         <div className="mb-5">
@@ -85,9 +82,9 @@ export default function CompletionPopup({ stats, onDismiss, onStartNewTask }: Pr
           <div className="flex gap-2">
             {(
               [
-                { value: 'harder', label: '😫 Harder', bg: 'bg-red-50 border-red-200 text-red-700', active: 'border-red-400 bg-red-100' },
-                { value: 'right',  label: '😊 Right',  bg: 'bg-surface-50 border-surface-200 text-surface-700', active: 'border-teal-400 bg-teal-50 text-teal-700' },
-                { value: 'easy',   label: '😎 Easy',   bg: 'bg-green-50 border-green-200 text-green-700', active: 'border-green-400 bg-green-100' },
+                { value: 'harder', label: 'Harder', bg: 'bg-red-50 border-red-200 text-red-700', active: 'border-red-400 bg-red-100' },
+                { value: 'right',  label: 'Right',  bg: 'bg-surface-50 border-surface-200 text-surface-700', active: 'border-teal-400 bg-teal-50 text-teal-700' },
+                { value: 'easy',   label: 'Easy',   bg: 'bg-green-50 border-green-200 text-green-700', active: 'border-green-400 bg-green-100' },
               ] as const
             ).map((opt) => (
               <button

@@ -279,6 +279,7 @@ export async function completeTask(): Promise<CompletionStats | null> {
       : s.totalBreakSeconds;
 
   const stats: CompletionStats = {
+    taskId: s.taskId,
     taskTitle: s.taskTitle,
     estimatedMinutes: s.estimatedMinutes,
     actualWorkSeconds,
