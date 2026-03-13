@@ -8,13 +8,14 @@ export async function GET() {
   const supabase = createSupabaseServer();
   const { data, error } = await supabase
     .from('tasks')
-    .select('*')
+    .select('id, title, tag, priority, updated_at, actual_duration, estimated_minutes')
     .eq('user_id', user.id)
-    .not('status', 'in', '("completed","cancelled")')
-    .order('scheduled_start', { ascending: true, nullsFirst: false });
+    .eq('status', 'completed')
+    .order('updated_at', { ascending: false })
+    .limit(100);
 
   if (error) {
-    console.error('[GET /api/tasks]', error);
+    console.error('[GET /api/tasks/completed]', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import type { TaskStats } from '@/types/timer';
 
 function StatCard({
@@ -8,14 +8,21 @@ function StatCard({
   value,
   icon,
   accent,
+  onClick,
 }: {
   label: string;
   value: number;
   icon: React.ReactNode;
   accent: string;
+  onClick?: () => void;
 }) {
   return (
-    <div className="flex-1 min-w-0 bg-white border border-surface-200 rounded-xl px-2.5 md:px-5 py-2.5 md:py-4 flex items-center gap-2 md:gap-4">
+    <div
+      onClick={onClick}
+      className={`flex-1 min-w-0 bg-white border border-surface-200 rounded-xl px-2.5 md:px-5 py-2.5 md:py-4 flex items-center gap-2 md:gap-4 ${
+        onClick ? 'cursor-pointer hover:bg-surface-50 hover:shadow-md transition-all' : ''
+      }`}
+    >
       <div className={`w-8 h-8 md:w-10 md:h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${accent}`}>
         {icon}
       </div>
@@ -27,22 +34,27 @@ function StatCard({
   );
 }
 
-export default function StatsCards() {
+interface Props {
+  onCompletedClick?: () => void;
+}
+
+export default function StatsCards({ onCompletedClick }: Props) {
   const [stats, setStats] = useState<TaskStats>({ total: 0, upcoming: 0, completed: 0 });
 
-  useEffect(() => {
-    async function fetchStats() {
-      try {
-        const res = await fetch('/api/tasks/stats');
-        if (res.ok) setStats(await res.json());
-      } catch {
-        // non-fatal
-      }
+  const fetchStats = useCallback(async () => {
+    try {
+      const res = await fetch('/api/tasks/stats');
+      if (res.ok) setStats(await res.json());
+    } catch {
+      // non-fatal
     }
+  }, []);
+
+  useEffect(() => {
     void fetchStats();
     const id = setInterval(fetchStats, 30_000);
     return () => clearInterval(id);
-  }, []);
+  }, [fetchStats]);
 
   return (
     <div className="flex-shrink-0 overflow-x-auto px-4 md:px-6 py-3 md:py-4">
@@ -71,6 +83,7 @@ export default function StatsCards() {
           label="Completed"
           value={stats.completed}
           accent="bg-green-50"
+          onClick={onCompletedClick}
           icon={
             <svg className="w-4 h-4 md:w-5 md:h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
