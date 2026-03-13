@@ -161,13 +161,17 @@ export async function getOrCreateTimeSlotCalendar(
 }
 
 /**
- * Delete a GCal event by ID. Non-fatal — swallows errors.
+ * Delete a GCal event by ID. Always non-fatal — never throws.
  *
  * Strategy:
  *  1. Try the provided calendarId first (fastest path).
- *  2. If that fails, enumerate ALL writable calendars the user has and try each one.
- *     This handles the case where calendarId is stale / wrong (e.g. DB returned
- *     'primary' but the event was created inside the dedicated 'TimeSlot' calendar).
+ *  2. If that fails with anything other than 404, enumerate ALL writable calendars
+ *     and try each one. This handles stale calendarId values.
+ *
+ * Error handling:
+ *  - 404 = event already deleted, safe to ignore silently.
+ *  - 401/403 = auth failure, logged as error (likely stale token).
+ *  - Other = unexpected, logged as error.
  */
 export async function deleteCalendarEvent(
   calendar: ReturnType<typeof google.calendar>,
@@ -179,7 +183,18 @@ export async function deleteCalendarEvent(
     await calendar.events.delete({ calendarId, eventId });
     console.log('[deleteCalendarEvent] deleted', eventId, 'from', calendarId);
     return;
-  } catch { /* fall through to exhaustive search */ }
+  } catch (err: unknown) {
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    if (status === 404) {
+      // Already deleted — safe to ignore
+      return;
+    }
+    if (status === 401 || status === 403) {
+      console.error(`[deleteCalendarEvent] auth failure for event ${eventId} on ${calendarId}:`, status);
+      return; // no point trying other calendars with same auth
+    }
+    // Other error — fall through to exhaustive search
+  }
 
   // Slow path: enumerate all writable calendars and try each one
   try {
@@ -190,9 +205,18 @@ export async function deleteCalendarEvent(
         await calendar.events.delete({ calendarId: cal.id, eventId });
         console.log('[deleteCalendarEvent] deleted', eventId, 'from', cal.id, '(exhaustive search)');
         return;
-      } catch { /* not in this calendar either */ }
+      } catch (err: unknown) {
+        const s = (err as { response?: { status?: number } })?.response?.status;
+        if (s === 404) continue; // not in this calendar
+        if (s === 401 || s === 403) {
+          console.error(`[deleteCalendarEvent] auth failure for event ${eventId} on ${cal.id}:`, s);
+          return;
+        }
+      }
     }
-  } catch { /* can't list calendars */ }
+  } catch (err) {
+    console.error('[deleteCalendarEvent] failed to list calendars:', (err as Error)?.message);
+  }
 
   console.warn('[deleteCalendarEvent] event', eventId, 'not found in any calendar — may already be deleted');
 }

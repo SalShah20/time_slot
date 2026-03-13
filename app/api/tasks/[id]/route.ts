@@ -22,6 +22,7 @@ export async function PATCH(
     scheduledStart?: string;
     timezone?: string;
     isFixed?: boolean;
+    status?: string;
   };
 
   const supabase = createSupabaseServer();
@@ -51,6 +52,7 @@ export async function PATCH(
   if (body.deadline !== undefined)         update.deadline          = body.deadline || null;
   if (body.estimatedMinutes !== undefined) update.estimated_minutes = body.estimatedMinutes;
   if (body.isFixed !== undefined)         update.is_fixed          = body.isFixed;
+  if (body.status !== undefined)          update.status            = body.status;
 
   const newMinutes = body.estimatedMinutes ?? (existing.estimated_minutes as number);
 

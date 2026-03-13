@@ -44,12 +44,13 @@ export async function POST(
     } catch (err) {
       console.warn('[POST /api/tasks/[id]/complete] GCal cleanup failed:', err);
     }
-    // Remove from local cache so ScheduleView reflects the change immediately
-    await supabase
-      .from('calendar_events')
-      .delete()
-      .eq('user_id', user.id)
-      .eq('google_event_id', googleEventId);
+    // Clear google_event_id so cleanup sweep doesn't retry + remove from local cache
+    await Promise.all([
+      supabase.from('tasks').update({ google_event_id: null }).eq('id', params.id),
+      supabase.from('calendar_events').delete().eq('user_id', user.id).eq('google_event_id', googleEventId),
+    ]);
+  } else {
+    console.warn(`[POST /api/tasks/[id]/complete] Task ${params.id} has no google_event_id — skipping GCal delete`);
   }
 
   return NextResponse.json(data);

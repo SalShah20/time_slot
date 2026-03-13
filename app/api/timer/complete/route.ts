@@ -27,6 +27,7 @@ export async function POST(req: NextRequest) {
     .from('tasks')
     .select('google_event_id')
     .eq('id', taskId)
+    .eq('user_id', user.id)
     .single();
 
   // 1. Update task: mark completed + set actual_duration
@@ -90,6 +91,13 @@ export async function POST(req: NextRequest) {
     } catch (err) {
       console.warn('[/api/timer/complete] GCal cleanup failed:', err);
     }
+    // Clear google_event_id so cleanup sweep doesn't retry + remove from local cache
+    await Promise.all([
+      supabase.from('tasks').update({ google_event_id: null }).eq('id', taskId),
+      supabase.from('calendar_events').delete().eq('user_id', user.id).eq('google_event_id', googleEventId),
+    ]);
+  } else {
+    console.warn(`[/api/timer/complete] Task ${taskId} has no google_event_id — skipping GCal delete`);
   }
 
   return NextResponse.json({ ok: true });

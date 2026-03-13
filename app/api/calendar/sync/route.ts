@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
-import { createOAuthClient, getOrCreateTimeSlotCalendar, getTimeSlotCalendarId } from '@/lib/googleCalendar';
+import { createOAuthClient, getOrCreateTimeSlotCalendar, getTimeSlotCalendarId, getCalendarClient, deleteCalendarEvent } from '@/lib/googleCalendar';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 import { localTimeOnDay } from '@/lib/scheduleUtils';
 
@@ -214,6 +214,34 @@ export async function POST(req: NextRequest) {
       if (staleErr) console.warn('[/api/calendar/sync] stale-delete error:', staleErr);
       else console.log('[/api/calendar/sync] Removed', staleRowIds.length, 'stale events');
     }
+  }
+
+  // ── Orphaned GCal event cleanup ─────────────────────────────────────────────
+  // Completed tasks that still have a google_event_id indicate a prior deletion
+  // attempt failed. Try again now that we have a working calendar client.
+  try {
+    const { data: orphaned } = await supabase
+      .from('tasks')
+      .select('id, google_event_id')
+      .eq('user_id', user.id)
+      .eq('status', 'completed')
+      .not('google_event_id', 'is', null);
+
+    if (orphaned && orphaned.length > 0) {
+      const calClient = await getCalendarClient(supabase, user.id);
+      if (calClient) {
+        const calId = await getTimeSlotCalendarId(supabase, user.id);
+        await Promise.all(
+          orphaned.map(async (t) => {
+            await deleteCalendarEvent(calClient, t.google_event_id as string, calId);
+            await supabase.from('tasks').update({ google_event_id: null }).eq('id', t.id);
+          }),
+        );
+        console.log('[/api/calendar/sync] Cleaned up', orphaned.length, 'orphaned GCal events');
+      }
+    }
+  } catch (err) {
+    console.warn('[/api/calendar/sync] Orphaned event cleanup failed (non-fatal):', err);
   }
 
   // Renew the webhook channel if it expires within 48h
