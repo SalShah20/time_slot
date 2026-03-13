@@ -31,7 +31,7 @@ export async function GET() {
 }
 
 function isValidHalfHour(n: number): boolean {
-  return typeof n === 'number' && isFinite(n) && n % 0.5 === 0;
+  return typeof n === 'number' && isFinite(n) && n >= 0 && n <= 23.5 && n % 0.5 === 0;
 }
 
 export async function PATCH(req: NextRequest) {
@@ -56,26 +56,9 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'All hour fields must be numbers' }, { status: 400 });
   }
 
-  // Validate 30-min increments
+  // Validate range and 30-min increments (0–23.5)
   if (!isValidHalfHour(workStartHour) || !isValidHalfHour(workEndHour) || !isValidHalfHour(workEndLateHour)) {
-    return NextResponse.json({ error: 'Hours must be in 30-minute increments' }, { status: 400 });
-  }
-
-  // Validate ranges
-  if (workStartHour < 0 || workStartHour > 23.5) {
-    return NextResponse.json({ error: 'Start hour must be 0–23.5' }, { status: 400 });
-  }
-  // workEndHour can be up to 24 (midnight = end of day)
-  if (workEndHour < 0 || workEndHour > 24) {
-    return NextResponse.json({ error: 'End hour must be 0–24' }, { status: 400 });
-  }
-  if (workEndLateHour < 0 || workEndLateHour > 6) {
-    return NextResponse.json({ error: 'Late hour must be 0–6' }, { status: 400 });
-  }
-
-  // Validate logical ordering: start < end (preferred window must be positive)
-  if (workStartHour >= workEndHour) {
-    return NextResponse.json({ error: 'Start hour must be before end hour' }, { status: 400 });
+    return NextResponse.json({ error: 'Hours must be 0–23.5 in 30-minute increments' }, { status: 400 });
   }
 
   // Validate timezone if provided

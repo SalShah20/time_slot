@@ -22,6 +22,9 @@ function halfHourRange(from: number, to: number): number[] {
   return result;
 }
 
+// Full 24-hour range in 30-min steps: 0, 0.5, 1, ..., 23.5
+const allHalfHours = halfHourRange(0, 23.5);
+
 export default function SettingsPage() {
   const router = useRouter();
   const [loading, setLoading]   = useState(true);
@@ -37,7 +40,8 @@ export default function SettingsPage() {
       .then((r) => r.json())
       .then((data: { workStartHour: number; workEndHour: number; workEndLateHour: number }) => {
         setWorkStartHour(data.workStartHour);
-        setWorkEndHour(data.workEndHour);
+        // Normalize legacy value 24 → 0
+        setWorkEndHour(data.workEndHour === 24 ? 0 : data.workEndHour);
         setWorkEndLateHour(data.workEndLateHour);
       })
       .catch(() => null)
@@ -71,15 +75,8 @@ export default function SettingsPage() {
     }
   }
 
-  // Start options: 5 AM – 11 AM in 30-min steps
-  const startOptions = halfHourRange(5, 11);
-
-  // End options: 5 PM – 12 AM (midnight) in 30-min steps
-  // 24 represents midnight (end of day)
-  const endOptions = halfHourRange(17, 24);
-
-  // Late hour options: 12 AM – 6 AM in 30-min steps
-  const lateOptions = halfHourRange(0, 6);
+  // Whether the blackout window is valid (late hour must be before start hour)
+  const hasValidBlackout = workEndLateHour < workStartHour;
 
   const selectClass =
     'w-full border border-surface-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-surface-900 bg-white appearance-none';
@@ -121,7 +118,7 @@ export default function SettingsPage() {
                   onChange={(e) => setWorkStartHour(Number(e.target.value))}
                   className={selectClass}
                 >
-                  {startOptions.map((h) => (
+                  {allHalfHours.map((h) => (
                     <option key={h} value={h}>{formatHalfHour(h)}</option>
                   ))}
                 </select>
@@ -137,10 +134,8 @@ export default function SettingsPage() {
                   onChange={(e) => setWorkEndHour(Number(e.target.value))}
                   className={selectClass}
                 >
-                  {endOptions.map((h) => (
-                    <option key={h} value={h}>
-                      {h === 24 ? '12:00 AM (midnight)' : formatHalfHour(h)}
-                    </option>
+                  {allHalfHours.map((h) => (
+                    <option key={h} value={h}>{formatHalfHour(h)}</option>
                   ))}
                 </select>
               </div>
@@ -148,24 +143,28 @@ export default function SettingsPage() {
               {/* Last resort cutoff */}
               <div>
                 <label className="block text-sm font-medium text-surface-700 mb-1.5">
-                  Latest ever (last resort only)
+                  Absolute latest (last resort only)
                 </label>
                 <select
                   value={workEndLateHour}
                   onChange={(e) => setWorkEndLateHour(Number(e.target.value))}
                   className={selectClass}
                 >
-                  {lateOptions.map((h) => (
-                    <option key={h} value={h}>
-                      {h === 0 ? '12:00 AM (midnight)' : formatHalfHour(h)}
-                    </option>
+                  {allHalfHours.map((h) => (
+                    <option key={h} value={h}>{formatHalfHour(h)}</option>
                   ))}
                 </select>
               </div>
 
-              <p className="text-xs text-surface-400">
-                Tasks are never scheduled between {formatHalfHour(workEndLateHour)} and {formatHalfHour(workStartHour)}.
-              </p>
+              {hasValidBlackout ? (
+                <p className="text-xs text-surface-400">
+                  Tasks are never scheduled between {formatHalfHour(workEndLateHour)} and {formatHalfHour(workStartHour)}.
+                </p>
+              ) : (
+                <p className="text-xs text-amber-600">
+                  The &ldquo;absolute latest&rdquo; time must be earlier than the &ldquo;earliest start&rdquo; time to create a blackout window. Without a blackout, tasks can be scheduled at any hour.
+                </p>
+              )}
             </div>
 
             {/* Save */}
