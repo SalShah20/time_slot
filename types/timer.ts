@@ -55,6 +55,9 @@ export interface TaskStats {
   total: number;
   upcoming: number;
   completed: number;
+  avgAccuracy?: number | null;
+  mostProductiveTag?: string | null;
+  mostProductiveMinutes?: number | null;
 }
 
 export interface ActiveTimerRow {

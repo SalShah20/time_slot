@@ -1,25 +1,82 @@
-import type { UserTimingHistory } from './timingHistory';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { fetchUserTimingHistory } from './timingHistory';
+
+export type DurationSource = 'historical' | 'llm' | 'tag-fallback';
+
+export interface DurationEstimate {
+  minutes: number;
+  source: DurationSource;
+}
 
 /**
- * LLM-powered duration estimator.
- * Called when a task is submitted without a manual duration.
- * Falls back to tag-based defaults if the API key is missing or the call fails.
+ * Returns the median actual work duration for completed tasks with the same tag.
+ * Requires at least 2 data points to be meaningful; returns null otherwise.
+ */
+export async function getHistoricalDuration(
+  supabase: SupabaseClient,
+  userId: string,
+  tag: string,
+): Promise<number | null> {
+  const { data } = await supabase
+    .from('tasks')
+    .select('actual_duration')
+    .eq('user_id', userId)
+    .eq('tag', tag)
+    .eq('status', 'completed')
+    .not('actual_duration', 'is', null)
+    .order('updated_at', { ascending: false })
+    .limit(10);
+
+  if (!data || data.length === 0) return null;
+
+  const actuals = data
+    .map((t) => Math.round((t.actual_duration as number) / 60))
+    .filter((d) => d > 0);
+
+  if (actuals.length < 2) return null;
+
+  const sorted = [...actuals].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+/**
+ * LLM-powered duration estimator with historical shortcut.
  *
- * Pass `history` (from `fetchUserTimingHistory`) to let the LLM calibrate its
- * estimate against the user's own past timing data.
+ * Priority order:
+ *   1. User's own historical median for the same tag (skips LLM entirely)
+ *   2. GPT-4o-mini estimate calibrated against the user's timing history
+ *   3. Tag-based default (no API key or LLM failure)
+ *
+ * Pass `supabase` + `userId` to enable the historical shortcut and
+ * automatic history fetching for LLM calibration.
  */
 export async function estimateDurationWithLLM(
   title: string,
   description?: string | null,
   tag?: string | null,
   priority?: string | null,
-  history?: UserTimingHistory,
-): Promise<number> {
+  supabase?: SupabaseClient,
+  userId?: string,
+): Promise<DurationEstimate> {
+  // ── 1. Historical shortcut: skip LLM if enough past data ──────────────────
+  if (supabase && userId && tag) {
+    const historical = await getHistoricalDuration(supabase, userId, tag);
+    if (historical !== null) {
+      console.log(`[estimateDuration] "${title}" → ${historical}m (historical median, tag: ${tag})`);
+      return { minutes: historical, source: 'historical' };
+    }
+  }
+
+  // ── 2. Fetch timing history for LLM calibration ───────────────────────────
   const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey) {
-    return tagDefault(tag);
+    return { minutes: tagDefault(tag), source: 'tag-fallback' };
   }
+
+  const history = supabase && userId
+    ? await fetchUserTimingHistory(supabase, userId)
+    : undefined;
 
   // Build the history section only when there is something useful to say
   let historySection = '';
@@ -84,13 +141,13 @@ Guidelines (use history above to override these when relevant):
 
     if (!isNaN(minutes) && minutes > 0 && minutes <= 480) {
       console.log(`[estimateDuration] "${title}" → ${minutes} min (LLM${historySection ? '+history' : ''})`);
-      return minutes;
+      return { minutes, source: 'llm' };
     }
 
     throw new Error(`Unexpected LLM value: "${raw}"`);
   } catch (err) {
     console.warn('[estimateDuration] Falling back to tag default:', err);
-    return tagDefault(tag);
+    return { minutes: tagDefault(tag), source: 'tag-fallback' };
   }
 }
 

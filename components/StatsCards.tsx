@@ -56,6 +56,25 @@ export default function StatsCards({ onCompletedClick }: Props) {
     return () => clearInterval(id);
   }, [fetchStats]);
 
+  // Build insight string from productivity data
+  const insightParts: string[] = [];
+  if (stats.avgAccuracy != null && stats.avgAccuracy > 0) {
+    const pct = Math.round(Math.abs(1 - stats.avgAccuracy) * 100);
+    if (pct > 5) {
+      insightParts.push(
+        stats.avgAccuracy < 1
+          ? `Your tasks take ${pct}% longer than estimated`
+          : `Your estimates are ${pct}% longer than actual`
+      );
+    } else {
+      insightParts.push('Your estimates are spot on');
+    }
+  }
+  if (stats.mostProductiveTag && stats.mostProductiveMinutes) {
+    const hours = (stats.mostProductiveMinutes / 60).toFixed(1);
+    insightParts.push(`Most productive: ${stats.mostProductiveTag} (${hours}h this week)`);
+  }
+
   return (
     <div className="flex-shrink-0 overflow-x-auto px-4 md:px-6 py-3 md:py-4">
       <div className="flex gap-2 md:grid md:grid-cols-3 md:gap-3">
@@ -91,6 +110,11 @@ export default function StatsCards({ onCompletedClick }: Props) {
           }
         />
       </div>
+      {insightParts.length > 0 && (
+        <p className="text-xs text-surface-400 text-center mt-2 px-4 truncate">
+          {insightParts.join(' \u00b7 ')}
+        </p>
+      )}
     </div>
   );
 }

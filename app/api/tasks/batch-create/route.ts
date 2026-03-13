@@ -5,7 +5,6 @@ import { fallbackSchedule, localHourIn, localDateStrIn } from '@/lib/scheduleUti
 import type { BusyInterval, WorkHours } from '@/lib/scheduleUtils';
 import { DEFAULT_WORK_HOURS } from '@/lib/scheduleUtils';
 import { estimateDurationWithLLM } from '@/lib/estimateDuration';
-import { fetchUserTimingHistory } from '@/lib/timingHistory';
 import { computeSplitSessions } from '@/lib/splitSchedule';
 import { guessTagWithLLM } from '@/lib/guessTag';
 import type { SplitSession } from '@/lib/splitSchedule';
@@ -317,16 +316,14 @@ export async function POST(req: NextRequest) {
   const wh = await fetchWorkHours(supabase, user.id);
 
   try {
-  // Fetch timing history once — shared across all duration estimates in this batch
-  const history = await fetchUserTimingHistory(supabase, user.id);
-
   // Fill in missing tags and durations via LLM (parallel to keep batch fast)
+  // estimateDurationWithLLM now handles historical lookup + LLM calibration internally
   const tasksWithDurations = await Promise.all(
     tasks.map(async (t) => {
       const finalTag = t.tag ?? await guessTagWithLLM(t.title, t.description);
       const estimated = t.estimatedMinutes
         ? t.estimatedMinutes
-        : await estimateDurationWithLLM(t.title, t.description, finalTag, t.priority, history);
+        : (await estimateDurationWithLLM(t.title, t.description, finalTag, t.priority, supabase, user.id)).minutes;
       return { ...t, tag: finalTag ?? t.tag, estimatedMinutes: estimated };
     }),
   );

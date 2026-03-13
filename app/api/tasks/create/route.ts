@@ -6,7 +6,7 @@ import type { BusyInterval, WorkHours } from '@/lib/scheduleUtils';
 import { DEFAULT_WORK_HOURS } from '@/lib/scheduleUtils';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { estimateDurationWithLLM } from '@/lib/estimateDuration';
-import { fetchUserTimingHistory } from '@/lib/timingHistory';
+import type { DurationSource } from '@/lib/estimateDuration';
 import { computeSplitSessions } from '@/lib/splitSchedule';
 import { guessTagWithLLM } from '@/lib/guessTag';
 import { fetchWorkHours, formatHourForPrompt } from '@/lib/workHours';
@@ -225,11 +225,17 @@ export async function POST(req: NextRequest) {
   // If no tag supplied, guess it from the title/description
   const finalTag = tag ?? await guessTagWithLLM(title, description);
 
-  // If no duration supplied, ask the LLM to estimate it (using the user's own history to calibrate)
-  const finalEstimatedMinutes = estimatedMinutes || await estimateDurationWithLLM(
-    title, description, finalTag, priority,
-    await fetchUserTimingHistory(supabase, user.id),
-  );
+  // If no duration supplied, check historical data first, then ask LLM
+  let durationSource: DurationSource = 'llm';
+  let finalEstimatedMinutes: number;
+  if (estimatedMinutes) {
+    finalEstimatedMinutes = estimatedMinutes;
+    durationSource = 'llm'; // user-supplied, but use 'llm' as neutral default
+  } else {
+    const est = await estimateDurationWithLLM(title, description, finalTag, priority, supabase, user.id);
+    finalEstimatedMinutes = est.minutes;
+    durationSource = est.source;
+  }
 
   // ── Fixed-time fast path ────────────────────────────────────────────────────
   // Fixed tasks skip LLM scheduling, conflict checks, and splitting entirely.
@@ -385,7 +391,7 @@ export async function POST(req: NextRequest) {
         console.error('[/api/tasks/create] split GCal:', err);
       }
 
-      return NextResponse.json({ tasks: allSessions });
+      return NextResponse.json({ tasks: allSessions, durationSource });
     }
     // Split returned null (not enough blocks) → fall through to single insert
   }
@@ -448,5 +454,5 @@ export async function POST(req: NextRequest) {
     console.error('[/api/tasks/create] Google Calendar event creation:', err);
   }
 
-  return NextResponse.json({ tasks: [data] });
+  return NextResponse.json({ tasks: [data], durationSource });
 }
