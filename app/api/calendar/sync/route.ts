@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
-import { createOAuthClient, getOrCreateTimeSlotCalendar } from '@/lib/googleCalendar';
+import { createOAuthClient, getOrCreateTimeSlotCalendar, getTimeSlotCalendarId } from '@/lib/googleCalendar';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 import { localTimeOnDay } from '@/lib/scheduleUtils';
 
@@ -57,26 +57,75 @@ export async function POST(req: NextRequest) {
     console.warn('[/api/calendar/sync] TimeSlot calendar setup failed (non-fatal):', err);
   }
 
+  // Get the TimeSlot calendar ID so we can exclude it from freebusy
+  const timeSlotCalId = await getTimeSlotCalendarId(supabase, user.id);
+
   // Fetch events for today + tomorrow (use user's local timezone for date boundaries)
   const now = new Date();
-  const startOfDay = localTimeOnDay(now, 0, 0, timezone, 0).toISOString();
-  const endOfDay   = localTimeOnDay(now, 0, 0, timezone, 2).toISOString();
+  const startOfDay   = localTimeOnDay(now, 0, 0, timezone, 0).toISOString();
+  const endOfTomorrow = localTimeOnDay(now, 0, 0, timezone, 2).toISOString();
 
-  console.log('[/api/calendar/sync] Querying Google Calendar:', { startOfDay, endOfDay, serverDate: now.toISOString() });
+  console.log('[/api/calendar/sync] Querying Google Calendar freebusy:', { startOfDay, endOfTomorrow, serverDate: now.toISOString() });
 
-  let response;
+  // ── Freebusy query across ALL user calendars ─────────────────────────────
+  const rows: Array<{
+    user_id: string;
+    google_event_id: string;
+    title: string | null;
+    start_time: string;
+    end_time: string;
+    is_busy: boolean;
+    synced_at: string;
+  }> = [];
+
   try {
-    response = await calendar.events.list({
-      calendarId: 'primary',
-      timeMin: startOfDay,
-      timeMax: endOfDay,
-      singleEvents: true,
-      orderBy: 'startTime',
-    });
+    // 1. Fetch the user's full calendar list
+    const calListRes = await calendar.calendarList.list();
+    const allCals = calListRes.data.items ?? [];
+
+    // Exclude the dedicated TimeSlot calendar (we manage those events directly)
+    const freebusyCals = allCals.filter((c) => c.id && c.id !== timeSlotCalId);
+
+    console.log(
+      '[/api/calendar/sync] Calendars found:',
+      allCals.length,
+      '| Querying freebusy for:',
+      freebusyCals.length,
+      freebusyCals.map((c) => c.summary ?? c.id),
+    );
+
+    if (freebusyCals.length > 0) {
+      // 2. Run freebusy query across all calendars
+      const freebusyRes = await calendar.freebusy.query({
+        requestBody: {
+          timeMin: startOfDay,
+          timeMax: endOfTomorrow,
+          items: freebusyCals.map((c) => ({ id: c.id! })),
+        },
+      });
+
+      // 3. Flatten all busy intervals into calendar_events rows
+      const calendars = freebusyRes.data.calendars ?? {};
+      for (const [calId, calData] of Object.entries(calendars)) {
+        const busySlots = calData.busy ?? [];
+        for (const slot of busySlots) {
+          if (!slot.start || !slot.end) continue;
+          // Synthetic ID: deterministic so upserts work correctly
+          const syntheticId = `freebusy-${calId}-${slot.start}`;
+          const calMeta = freebusyCals.find((c) => c.id === calId);
+          rows.push({
+            user_id: user.id,
+            google_event_id: syntheticId,
+            title: calMeta?.summary ?? null,
+            start_time: slot.start,
+            end_time: slot.end,
+            is_busy: true,
+            synced_at: new Date().toISOString(),
+          });
+        }
+      }
+    }
   } catch (err: unknown) {
-    // googleapis v100+ (gaxios-based) puts the HTTP status in err.status or
-    // err.response?.status, NOT in err.code (which is a string like "ERR_BAD_REQUEST").
-    // Older code that checked err.code === 401 always missed auth failures.
     const gErr = err as {
       code?: number | string;
       status?: number;
@@ -106,39 +155,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'google_api', message: gErr?.message }, { status: 500 });
   }
 
-  const events = response.data.items ?? [];
-  console.log('[/api/calendar/sync] Google returned', events.length, 'events:', events.map(e => ({
-    id: e.id,
-    summary: e.summary,
-    start: e.start?.dateTime ?? e.start?.date,
-  })));
-
-  const rows = events
-    .filter((e) => e.id && (e.start?.dateTime || e.start?.date))
-    .map((e) => ({
-      user_id: user.id,
-      google_event_id: e.id!,
-      title: e.summary ?? null,
-      // For all-day events (no dateTime), use local midnight so date-range
-      // queries (which are also based on local midnight) include them correctly.
-      start_time: e.start!.dateTime ?? (() => {
-        const [y, m, d] = e.start!.date!.split('-').map(Number);
-        return new Date(y, m - 1, d).toISOString();
-      })(),
-      end_time: e.end!.dateTime ?? (() => {
-        const [y, m, d] = e.end!.date!.split('-').map(Number);
-        return new Date(y, m - 1, d).toISOString();
-      })(),
-      is_busy: e.transparency !== 'transparent',
-      synced_at: new Date().toISOString(),
-    }));
-
-  console.log('[/api/calendar/sync] Rows to upsert:', rows.length);
+  console.log('[/api/calendar/sync] Freebusy rows to upsert:', rows.length);
 
   // Insert-then-delete-stale strategy: never leave the DB empty during sync.
-  // 1. Remove existing cache entries ONLY for the events we're about to refresh (by ID).
-  // 2. Insert fresh events.
-  // 3. Delete any remaining entries in the date range that Google no longer returned.
   const freshIds = rows.map((r) => r.google_event_id);
 
   if (rows.length > 0) {
@@ -152,17 +171,15 @@ export async function POST(req: NextRequest) {
     console.log('[/api/calendar/sync] Upsert succeeded');
   }
 
-  // Step 3: delete stale entries in the date range that Google no longer returned.
-  // Guard: only run when Google returned ≥1 event — if Google returns 0 we keep
-  // existing entries to avoid wiping everything on transient API issues or empty days.
+  // Delete stale entries in the date range that Google no longer returned.
+  // Guard: only run when Google returned ≥1 event.
   if (freshIds.length > 0) {
-    // Fetch all IDs currently in the date range so we can filter in JS (avoids PostgREST NOT-IN syntax issues)
     const { data: existing } = await supabase
       .from('calendar_events')
       .select('id, google_event_id')
       .eq('user_id', user.id)
       .gte('start_time', startOfDay)
-      .lt('start_time', endOfDay);
+      .lt('start_time', endOfTomorrow);
 
     const freshIdSet = new Set(freshIds);
     const staleRowIds = (existing ?? [])

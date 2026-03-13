@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
-import { getCalendarClient, fetchCalendarEventsForDay, getOrCreateTimeSlotCalendar, getPriorityColorId } from '@/lib/googleCalendar';
+import { getCalendarClient, fetchCalendarEventsForDay, getOrCreateTimeSlotCalendar, getTimeSlotCalendarId, getPriorityColorId } from '@/lib/googleCalendar';
 import { fallbackSchedule, localHourIn, localDateStrIn } from '@/lib/scheduleUtils';
 import type { BusyInterval, WorkHours } from '@/lib/scheduleUtils';
 import { DEFAULT_WORK_HOURS } from '@/lib/scheduleUtils';
@@ -262,9 +262,13 @@ export async function POST(req: NextRequest) {
       const tomorrowDay  = localDateStrIn(tomorrowDate, timezone);
 
       if (scheduledDay > tomorrowDay) {
-        const calCheck = await getCalendarClient(supabase, user.id);
+        const [calCheck, tsCalId] = await Promise.all([
+          getCalendarClient(supabase, user.id),
+          getTimeSlotCalendarId(supabase, user.id),
+        ]);
         if (calCheck) {
-          const liveEvents = await fetchCalendarEventsForDay(calCheck, new Date(finalScheduledStart), timezone);
+          // Freebusy across all calendars (excluding TimeSlot's own calendar)
+          const liveEvents = await fetchCalendarEventsForDay(calCheck, new Date(finalScheduledStart), timezone, tsCalId);
           const sStart = new Date(finalScheduledStart);
           const sEnd   = new Date(finalScheduledEnd);
           const hasOverlap = liveEvents.some((e) => e.start < sEnd && e.end > sStart);

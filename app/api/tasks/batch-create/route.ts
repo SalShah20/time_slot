@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
-import { getCalendarClient, fetchCalendarEventsForDay, getOrCreateTimeSlotCalendar, getPriorityColorId } from '@/lib/googleCalendar';
+import { getCalendarClient, fetchCalendarEventsForDay, getOrCreateTimeSlotCalendar, getTimeSlotCalendarId, getPriorityColorId } from '@/lib/googleCalendar';
 import { fallbackSchedule, localHourIn, localDateStrIn } from '@/lib/scheduleUtils';
 import type { BusyInterval, WorkHours } from '@/lib/scheduleUtils';
 import { DEFAULT_WORK_HOURS } from '@/lib/scheduleUtils';
@@ -404,7 +404,10 @@ export async function POST(req: NextRequest) {
     );
 
     if (hasFutureDay) {
-      const calendarForCheck = await getCalendarClient(supabase, user.id);
+      const [calendarForCheck, tsCalIdForCheck] = await Promise.all([
+        getCalendarClient(supabase, user.id),
+        getTimeSlotCalendarId(supabase, user.id),
+      ]);
       if (calendarForCheck) {
         // Per-day cache: avoids redundant API calls when multiple tasks land on the same day
         const dayEventsCache = new Map<string, Array<{ start: Date; end: Date }>>();
@@ -417,10 +420,12 @@ export async function POST(req: NextRequest) {
           if (scheduledDay > tomorrowDay) {
             // Lazily fetch and cache live GCal events for this day
             if (!dayEventsCache.has(scheduledDay)) {
+              // Freebusy across all calendars (excluding TimeSlot's own calendar)
               const liveEvents = await fetchCalendarEventsForDay(
                 calendarForCheck,
                 new Date(scheduled[i].scheduled_start),
                 timezone,
+                tsCalIdForCheck,
               );
               dayEventsCache.set(scheduledDay, liveEvents);
               augmentedBusy.push(...liveEvents);

@@ -48,32 +48,45 @@ export async function getCalendarClient(supabase: SupabaseClient, userId: string
 }
 
 /**
- * Fetches live Google Calendar events for a specific local day and returns them
- * as busy intervals. Non-fatal — returns [] if the API call fails.
+ * Fetches live busy intervals for a specific local day across ALL of the user's
+ * Google Calendars using the freebusy API. Excludes the dedicated TimeSlot calendar.
+ * Non-fatal — returns [] if any API call fails.
  */
 export async function fetchCalendarEventsForDay(
   calendar: ReturnType<typeof google.calendar>,
   date: Date,
   timezone: string,
+  excludeCalendarId?: string,
 ): Promise<Array<{ start: Date; end: Date }>> {
   try {
     const startOfDay = localTimeOnDay(date, 0, 0, timezone, 0);
     const endOfDay   = localTimeOnDay(date, 0, 0, timezone, 1);
 
-    const res = await calendar.events.list({
-      calendarId: 'primary',
-      timeMin: startOfDay.toISOString(),
-      timeMax: endOfDay.toISOString(),
-      singleEvents: true,
-      orderBy: 'startTime',
+    // Get all calendars, exclude the TimeSlot calendar
+    const calListRes = await calendar.calendarList.list();
+    const cals = (calListRes.data.items ?? []).filter(
+      (c) => c.id && c.id !== excludeCalendarId,
+    );
+    if (cals.length === 0) return [];
+
+    const freebusyRes = await calendar.freebusy.query({
+      requestBody: {
+        timeMin: startOfDay.toISOString(),
+        timeMax: endOfDay.toISOString(),
+        items: cals.map((c) => ({ id: c.id! })),
+      },
     });
 
-    return (res.data.items ?? [])
-      .filter((e) => e.start?.dateTime && e.end?.dateTime && e.status !== 'cancelled')
-      .map((e) => ({
-        start: new Date(e.start!.dateTime!),
-        end:   new Date(e.end!.dateTime!),
-      }));
+    const results: Array<{ start: Date; end: Date }> = [];
+    const calendars = freebusyRes.data.calendars ?? {};
+    for (const calData of Object.values(calendars)) {
+      for (const slot of calData.busy ?? []) {
+        if (slot.start && slot.end) {
+          results.push({ start: new Date(slot.start), end: new Date(slot.end) });
+        }
+      }
+    }
+    return results;
   } catch (err) {
     console.warn('[fetchCalendarEventsForDay] API call failed:', err);
     return [];
