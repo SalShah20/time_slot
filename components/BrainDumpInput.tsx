@@ -148,9 +148,6 @@ export default function BrainDumpInput({ onTasksQueued, onSwitchToForm }: Props)
 
       {/* Bottom hint + form toggle */}
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs text-surface-400">
-          AI reads plain English — just write how you&apos;d text a friend.
-        </p>
         <button
           type="button"
           onClick={onSwitchToForm}
