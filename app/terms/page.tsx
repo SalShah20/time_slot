@@ -32,7 +32,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-xl font-semibold text-surface-900 mb-3">3. Account Registration</h2>
             <p>
-              You must sign in with a Google account to use TimeSlot. You are responsible for
+              You must sign in with an email account to use TimeSlot. You are responsible for
               maintaining the security of your account and for all activities that occur under your
               account. You must provide accurate and complete information when creating your account.
             </p>

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 import { getCalendarClient, fetchCalendarEventsForDay, getOrCreateTimeSlotCalendar, getTimeSlotCalendarId, getPriorityColorId } from '@/lib/googleCalendar';
-import { fallbackSchedule, localHourIn, localDateStrIn } from '@/lib/scheduleUtils';
+import { fallbackSchedule, localHourIn, localDateStrIn, localTimeOnDay, detectTargetDay, detectPinnedTime } from '@/lib/scheduleUtils';
 import type { BusyInterval, WorkHours } from '@/lib/scheduleUtils';
 import { DEFAULT_WORK_HOURS } from '@/lib/scheduleUtils';
 import { estimateDurationWithLLM } from '@/lib/estimateDuration';
@@ -151,6 +151,7 @@ RULES:
 6. Always leave at least 10 minutes of buffer between tasks
 7. If multiple valid slots for a task, pick the earliest valid one
 8. If the deadline is 5 or more days away, do NOT schedule today — prefer tomorrow or later
+9. If a task mentions a specific day ("on Tuesday", "by Friday", "next Monday"), ALWAYS schedule on that exact day. Never schedule on an earlier day even if time is available.
 
 Respond ONLY with a JSON array (no extra text):
 [{"index":0,"scheduled_start":"ISO 8601 timestamp"},{"index":1,"scheduled_start":"ISO 8601 timestamp"}]`;
@@ -365,16 +366,41 @@ export async function POST(req: NextRequest) {
     })),
   ];
 
-  // Partition: fixed tasks get their user-specified time; auto tasks go to the LLM
-  const fixedTasks = tasksWithDurations.filter((t) => t.isFixed && t.fixedStart);
-  const autoTasks  = tasksWithDurations.filter((t) => !t.isFixed || !t.fixedStart);
+  // Partition: fixed tasks and title-pinned tasks get their specified time; rest go to LLM
+  const fixedScheduled: ScheduledTask[] = [];
+  const autoTasks: (TaskInput & { tag?: string })[] = [];
 
-  // Convert fixed tasks to scheduled form and add them as busy intervals
-  const fixedScheduled: ScheduledTask[] = fixedTasks.map((t) => ({
-    ...t,
-    scheduled_start: new Date(t.fixedStart!).toISOString(),
-    scheduled_end:   new Date(new Date(t.fixedStart!).getTime() + t.estimatedMinutes * 60_000).toISOString(),
-  }));
+  for (const t of tasksWithDurations) {
+    if (t.isFixed && t.fixedStart) {
+      // Explicitly fixed via UI
+      fixedScheduled.push({
+        ...t,
+        scheduled_start: new Date(t.fixedStart).toISOString(),
+        scheduled_end:   new Date(new Date(t.fixedStart).getTime() + t.estimatedMinutes * 60_000).toISOString(),
+      });
+    } else {
+      // Check for pinned time in title (e.g. "at 4pm")
+      const pinnedTime = detectPinnedTime(t.title);
+      const targetDate = detectTargetDay(t.title, timezone);
+
+      if (pinnedTime) {
+        const baseDate = targetDate ?? new Date();
+        const pinnedStart = localTimeOnDay(baseDate, pinnedTime.hour, pinnedTime.minute, timezone, 0);
+        if (!targetDate && pinnedStart < new Date()) {
+          pinnedStart.setTime(localTimeOnDay(new Date(), pinnedTime.hour, pinnedTime.minute, timezone, 1).getTime());
+        }
+        fixedScheduled.push({
+          ...t,
+          isFixed: true,
+          scheduled_start: pinnedStart.toISOString(),
+          scheduled_end:   new Date(pinnedStart.getTime() + t.estimatedMinutes * 60_000).toISOString(),
+        });
+      } else {
+        autoTasks.push(t);
+      }
+    }
+  }
+
   for (const ft of fixedScheduled) {
     existingBusy.push({ start: new Date(ft.scheduled_start), end: new Date(ft.scheduled_end) });
   }

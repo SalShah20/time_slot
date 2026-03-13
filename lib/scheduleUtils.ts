@@ -298,3 +298,58 @@ export function findFreeBlocksInWindow(
 
   return freeBlocks.sort((a, b) => a.start.getTime() - b.start.getTime());
 }
+
+// ─── Title-based scheduling hints ─────────────────────────────────────────
+
+const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
+
+/**
+ * If the title mentions a specific day of the week (e.g. "on Tuesday", "next Monday"),
+ * returns the next occurrence of that day as a Date at midnight local time.
+ * "on Tuesday" when today is Tuesday returns NEXT Tuesday (7 days out).
+ */
+export function detectTargetDay(title: string, timezone: string): Date | null {
+  const lower = title.toLowerCase();
+  const match = DAYS.find((d) =>
+    lower.includes(`on ${d}`) ||
+    lower.includes(`by ${d}`) ||
+    lower.includes(`next ${d}`) ||
+    lower.includes(`this ${d}`),
+  );
+  if (!match) return null;
+
+  const target = DAYS.indexOf(match);
+  const now = new Date();
+  const localDayName = new Intl.DateTimeFormat('en-US', { timeZone: timezone, weekday: 'long' })
+    .format(now)
+    .toLowerCase();
+  const currentIdx = DAYS.indexOf(localDayName as typeof DAYS[number]);
+  if (currentIdx === -1) return null;
+
+  let daysUntil = target - currentIdx;
+  if (daysUntil <= 0) daysUntil += 7;
+
+  return localTimeOnDay(now, 0, 0, timezone, daysUntil);
+}
+
+const TIME_REGEX = /\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i;
+
+/**
+ * If the title contains an explicit time like "at 4pm" or "at 14:30",
+ * returns { hour, minute } in 24-hour format. Returns null otherwise.
+ */
+export function detectPinnedTime(title: string): { hour: number; minute: number } | null {
+  const m = title.match(TIME_REGEX);
+  if (!m) return null;
+
+  let hour = parseInt(m[1], 10);
+  const minute = parseInt(m[2] ?? '0', 10);
+  const period = m[3]?.toLowerCase();
+
+  if (period === 'pm' && hour < 12) hour += 12;
+  if (period === 'am' && hour === 12) hour = 0;
+  // No am/pm specified: assume PM for hours 1-7 (e.g. "at 4" = 4 PM)
+  if (!period && hour >= 1 && hour <= 7) hour += 12;
+
+  return { hour, minute };
+}

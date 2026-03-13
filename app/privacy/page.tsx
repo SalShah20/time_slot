@@ -13,7 +13,7 @@ export default function PrivacyPolicy() {
           <section>
             <h2 className="text-xl font-semibold text-surface-900 mb-3">1. Introduction</h2>
             <p>
-              TimeSlot (&quot;we&quot;, &quot;our&quot;, or &quot;the app&quot;) is a task scheduling and
+              TimeSlot is a task scheduling and
               timer application. This Privacy Policy explains how we collect, use, and protect your
               information when you use our service.
             </p>

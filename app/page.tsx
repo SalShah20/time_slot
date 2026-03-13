@@ -840,7 +840,12 @@ export default function Home() {
                               </p>
                             )}
                             {task.scheduled_start && (
-                              <p className="text-xs text-surface-500 mt-0.5">
+                              <p className="text-xs text-surface-500 mt-0.5 flex items-center gap-1">
+                                {task.is_fixed && (
+                                  <svg className="w-3 h-3 text-surface-400 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+                                  </svg>
+                                )}
                                 {formatTime(task.scheduled_start)}
                                 {task.scheduled_end && ` – ${formatTime(task.scheduled_end)}`}
                               </p>

@@ -50,6 +50,15 @@ export async function getHistoricalDuration(
  * Pass `supabase` + `userId` to enable the historical shortcut and
  * automatic history fetching for LLM calibration.
  */
+// Keywords that indicate a near-instant action (5–15 min max).
+const INSTANT_KEYWORDS = [
+  'check in', 'check-in', 'checkin',
+  'submit', 'send email', 'send message',
+  'make a call', 'phone call', 'pay bill',
+  'book appointment', 'rsvp', 'confirm',
+  'reply to', 'respond to',
+];
+
 export async function estimateDurationWithLLM(
   title: string,
   description?: string | null,
@@ -58,6 +67,13 @@ export async function estimateDurationWithLLM(
   supabase?: SupabaseClient,
   userId?: string,
 ): Promise<DurationEstimate> {
+  // ── 0. Instant-action shortcut: skip everything for trivial tasks ─────────
+  const titleLower = title.toLowerCase();
+  if (INSTANT_KEYWORDS.some((kw) => titleLower.includes(kw))) {
+    console.log(`[estimateDuration] "${title}" → 10m (instant-action keyword match)`);
+    return { minutes: 10, source: 'llm' };
+  }
+
   // ── 1. Historical shortcut: skip LLM if enough past data ──────────────────
   if (supabase && userId && tag) {
     const historical = await getHistoricalDuration(supabase, userId, tag);
@@ -110,13 +126,13 @@ export async function estimateDurationWithLLM(
 Task: ${title}${description ? `\nDescription: ${description}` : ''}${tag ? `\nTag: ${tag}` : ''}${priority ? `\nPriority: ${priority}` : ''}${historySection}
 
 Guidelines (use history above to override these when relevant):
-- Study/homework: 60–180 min
-- "midterm", "final", "essay", "paper", "lab report": longer, often 2+ hours
-- Work tasks: 60–240 min
-- Personal errands: 30–90 min
-- Exercise: 30–90 min
-- Quick tasks (< 15 min based on title): 15 min
-- If completely unclear: 60 min`;
+- Instant action (check in, submit, send, call, pay, book, RSVP, confirm, reply): 5–15 min
+- Quick task (short email, brief call, simple lookup): 15–30 min
+- Standard task (assignment, workout, errands): 45–90 min
+- Deep work (essay, project, studying, lab report): 90–180 min
+- "midterm", "final", "essay", "paper", "lab report": often 2+ hours
+- Do NOT default to 60 minutes for unknown tasks — use the scale above
+- If completely unclear: 45 min`;
 
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 import { getCalendarClient, fetchCalendarEventsForDay, getOrCreateTimeSlotCalendar, getTimeSlotCalendarId, getPriorityColorId } from '@/lib/googleCalendar';
-import { fallbackSchedule, localHourIn, localDateStrIn } from '@/lib/scheduleUtils';
+import { fallbackSchedule, localHourIn, localDateStrIn, localTimeOnDay, detectTargetDay, detectPinnedTime } from '@/lib/scheduleUtils';
 import type { BusyInterval, WorkHours } from '@/lib/scheduleUtils';
 import { DEFAULT_WORK_HOURS } from '@/lib/scheduleUtils';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -25,11 +25,21 @@ async function scheduleWithLLM(
   },
   timezone: string,
   wh: WorkHours = DEFAULT_WORK_HOURS,
+  targetDate?: Date,
 ): Promise<{ scheduled_start: string; scheduled_end: string; busyIntervals: BusyInterval[] }> {
   const now        = new Date();
+
+  // When a targetDate is specified (e.g. "on Tuesday"), widen the scheduling
+  // window to include that day so the LLM and fallback can place the task there.
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-  const twoDaysOut = new Date(todayStart);
-  twoDaysOut.setDate(twoDaysOut.getDate() + 2);
+  let windowEnd: Date;
+  if (targetDate && targetDate > todayStart) {
+    windowEnd = new Date(targetDate);
+    windowEnd.setDate(windowEnd.getDate() + 2); // targetDate + 1 day of buffer
+  } else {
+    windowEnd = new Date(todayStart);
+    windowEnd.setDate(windowEnd.getDate() + 2);
+  }
 
   // Fetch existing schedule context
   const [{ data: existingTasks }, { data: calEvents }] = await Promise.all([
@@ -39,13 +49,13 @@ async function scheduleWithLLM(
       .eq('user_id', userId)
       .not('status', 'in', '("completed","cancelled")')
       .gte('scheduled_start', todayStart.toISOString())
-      .lt('scheduled_start', twoDaysOut.toISOString()),
+      .lt('scheduled_start', windowEnd.toISOString()),
     supabase
       .from('calendar_events')
       .select('title, start_time, end_time')
       .eq('user_id', userId)
       .gte('start_time', todayStart.toISOString())
-      .lt('start_time', twoDaysOut.toISOString()),
+      .lt('start_time', windowEnd.toISOString()),
   ]);
 
   // Build busy intervals for the fallback and overlap check
@@ -76,15 +86,19 @@ async function scheduleWithLLM(
     hour: 'numeric', minute: '2-digit', hour12: true,
   }).format(now);
 
+  const targetDateHint = targetDate
+    ? `\nTARGET DAY: The user specified a day — schedule on ${targetDate.toDateString()} (${new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: timezone }).format(targetDate)}). Do NOT schedule on an earlier day.`
+    : '';
+
   const prompt = `Schedule a task for a college student. Respond ONLY with valid JSON.
 
 TASK: "${task.title}" | ${task.estimatedMinutes} min${task.deadline ? ` | due ${task.deadline}` : ''}${task.priority ? ` | ${task.priority} priority` : ''}
-NOW: ${now.toISOString()} (${localTime})
+NOW: ${now.toISOString()} (${localTime})${targetDateHint}
 
-EXISTING TASKS (today & tomorrow):
+EXISTING TASKS:
 ${JSON.stringify(existingTasks ?? [])}
 
-CALENDAR EVENTS (today & tomorrow):
+CALENDAR EVENTS:
 ${JSON.stringify(calEvents ?? [])}
 
 RULES:
@@ -99,6 +113,7 @@ RULES:
 9. Always leave at least 10 minutes of buffer between tasks
 10. If the deadline is 5 or more days away, do NOT schedule today — prefer tomorrow or later
 11. For longer tasks with later due dates, it is ok to break them up into multiple sessions (ie. research papers, studying for a hard exam,...)
+12. If the task mentions a specific day ("on Tuesday", "by Friday", "next Monday"), ALWAYS schedule on that exact day. Never schedule on an earlier day even if time is available.
 
 Respond ONLY with this JSON (no extra text):
 {"scheduled_start":"ISO 8601 timestamp","reasoning":"one sentence"}`;
@@ -245,10 +260,26 @@ export async function POST(req: NextRequest) {
   let finalScheduledEnd: string;
   let initialBusy: BusyInterval[] = [];
 
+  // ── Detect pinned time from title (e.g. "check in for flight at 4pm") ────
+  const pinnedTime = !isFixed ? detectPinnedTime(title) : null;
+  // ── Detect day-of-week from title (e.g. "practice exam on Tuesday") ─────
+  const targetDate = !isFixed ? detectTargetDay(title, timezone) : null;
+
   if (isFixed && fixedStart) {
     finalScheduledStart = new Date(fixedStart).toISOString();
     finalScheduledEnd   = new Date(new Date(fixedStart).getTime() + finalEstimatedMinutes * 60_000).toISOString();
     console.log(`[/api/tasks/create] Fixed task "${title}" pinned to ${finalScheduledStart}`);
+  } else if (pinnedTime) {
+    // Title contains an explicit time — pin to that time, skip LLM scheduling
+    const baseDate = targetDate ?? new Date();
+    const pinnedStart = localTimeOnDay(baseDate, pinnedTime.hour, pinnedTime.minute, timezone, 0);
+    // If the pinned time is in the past and no target date, assume tomorrow
+    if (!targetDate && pinnedStart < new Date()) {
+      pinnedStart.setTime(localTimeOnDay(new Date(), pinnedTime.hour, pinnedTime.minute, timezone, 1).getTime());
+    }
+    finalScheduledStart = pinnedStart.toISOString();
+    finalScheduledEnd   = new Date(pinnedStart.getTime() + finalEstimatedMinutes * 60_000).toISOString();
+    console.log(`[/api/tasks/create] Pinned-time task "${title}" → ${finalScheduledStart}`);
   } else {
     const result = await scheduleWithLLM(
       supabase,
@@ -256,6 +287,7 @@ export async function POST(req: NextRequest) {
       { title, description, estimatedMinutes: finalEstimatedMinutes, tag: finalTag ?? undefined, deadline, priority },
       timezone,
       wh,
+      targetDate ?? undefined,
     );
     finalScheduledStart = result.scheduled_start;
     finalScheduledEnd   = result.scheduled_end;
@@ -306,7 +338,7 @@ export async function POST(req: NextRequest) {
     status:            'pending',
     reminder_minutes:  reminderMinutes ?? null,
   };
-  if (isFixed) baseInsert.is_fixed = true;
+  if (isFixed || pinnedTime) baseInsert.is_fixed = true;
 
   // ── Split trigger ───────────────────────────────────────────────────────────
   // Split any task > 60 min that has a future deadline — encourages breaks and
@@ -314,6 +346,7 @@ export async function POST(req: NextRequest) {
   // Fixed tasks are never split.
   const shouldSplit =
     !isFixed &&
+    !pinnedTime &&
     deadline &&
     new Date(deadline) > new Date() &&
     finalEstimatedMinutes > 60;
