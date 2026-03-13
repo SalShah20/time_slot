@@ -80,12 +80,31 @@ export async function POST(req: NextRequest) {
   }> = [];
 
   try {
-    // 1. Fetch the user's full calendar list
-    const calListRes = await calendar.calendarList.list();
+    // 1. Fetch the user's full calendar list + filter preferences in parallel
+    const [calListRes, filtersRes] = await Promise.all([
+      calendar.calendarList.list(),
+      supabase
+        .from('calendar_filters')
+        .select('google_calendar_id, is_included')
+        .eq('user_id', user.id),
+    ]);
     const allCals = calListRes.data.items ?? [];
 
-    // Exclude the dedicated TimeSlot calendar (we manage those events directly)
-    const freebusyCals = allCals.filter((c) => c.id && c.id !== timeSlotCalId);
+    // Build a lookup of explicit filter preferences
+    const filterMap = new Map<string, boolean>();
+    for (const row of (filtersRes.data ?? []) as Array<{ google_calendar_id: string; is_included: boolean }>) {
+      filterMap.set(row.google_calendar_id, row.is_included);
+    }
+
+    // Include calendars using opt-out model:
+    //  - Has filter row → respect is_included
+    //  - No filter row  → included by default
+    //  - TimeSlot calendar → always excluded
+    const freebusyCals = allCals.filter((c) => {
+      if (!c.id || c.id === timeSlotCalId) return false;
+      if (filterMap.has(c.id)) return filterMap.get(c.id)!;
+      return true; // no filter row → included by default
+    });
 
     console.log(
       '[/api/calendar/sync] Calendars found:',
@@ -96,7 +115,7 @@ export async function POST(req: NextRequest) {
     );
 
     if (freebusyCals.length > 0) {
-      // 2. Run freebusy query across all calendars
+      // 2. Run freebusy query across included calendars only
       const freebusyRes = await calendar.freebusy.query({
         requestBody: {
           timeMin: startOfDay,
