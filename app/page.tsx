@@ -11,7 +11,7 @@ import CompletionPopup from '@/components/CompletionPopup';
 import CompletedTasksModal from '@/components/CompletedTasksModal';
 import TaskDrawer from '@/components/TaskDrawer';
 import TaskEditModal from '@/components/TaskEditModal';
-import OnboardingTooltip from '@/components/OnboardingTooltip';
+import OnboardingFlow from '@/components/OnboardingFlow';
 import InstallPrompt from '@/components/InstallPrompt';
 import * as timer from '@/lib/timerService';
 import { supabase } from '@/lib/supabase';
@@ -47,6 +47,7 @@ export default function Home() {
   const [mobileView, setMobileView]               = useState<'tasks' | 'schedule'>('tasks');
   const [showCompletedModal, setShowCompletedModal] = useState(false);
   const [taskSearch, setTaskSearch]               = useState('');
+  const [showOnboarding, setShowOnboarding]       = useState(false);
 
   // Derive the YYYY-MM-DD key and current blocks from the cache.
   // Using local date components (not UTC) so it aligns with how fetchBlocks queries the server.
@@ -233,6 +234,15 @@ export default function Home() {
     void fetchTasks();
     void fetchBlocks();
   }, [fetchTasks, fetchBlocks]);
+
+  // ── Onboarding trigger ──────────────────────────────────────────────────────
+  // Show the guided onboarding flow only for truly new users:
+  // authenticated, zero tasks, and haven't dismissed onboarding before.
+  useEffect(() => {
+    if (loading || !user) return;
+    if (localStorage.getItem('ts_onboarding_seen')) return;
+    if (tasks.length === 0) setShowOnboarding(true);
+  }, [loading, user, tasks.length]);
 
   // Re-fetch blocks whenever the viewed date changes. Pass date explicitly so the
   // AbortController in fetchBlocks can immediately cancel any prior in-flight request.
@@ -432,6 +442,7 @@ export default function Home() {
         {/* Right controls */}
         <div className="flex items-center gap-3">
           {/* Google Calendar */}
+          <div data-onboarding="gcal">
           {calendarConnected && !calendarSyncError ? (
             <button
               onClick={() => void handleManualSync()}
@@ -471,6 +482,7 @@ export default function Home() {
               <span className="text-xs text-surface-400 mt-1 hidden sm:block">One account at a time</span>
             </div>
           )}
+          </div>
 
           {/* Start Timer */}
           <button
@@ -530,6 +542,17 @@ export default function Home() {
                   >
                     Feedback Form
                   </a>
+                  {process.env.NODE_ENV === 'development' && (
+                    <button
+                      onClick={() => {
+                        localStorage.removeItem('ts_onboarding_seen');
+                        window.location.reload();
+                      }}
+                      className="w-full text-left px-3 py-2 text-sm text-surface-400 hover:bg-surface-50 transition-colors"
+                    >
+                      Restart onboarding
+                    </button>
+                  )}
                   <button
                     onClick={handleSignOut}
                     className="w-full text-left px-3 py-2 text-sm text-surface-700 hover:bg-surface-50 transition-colors"
@@ -618,16 +641,29 @@ export default function Home() {
               </div>
             ) : filteredUpcoming.length === 0 ? (
               <div className="text-center py-12 px-4">
-                <div className="w-10 h-10 bg-surface-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <svg className="w-5 h-5 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                <div className="w-12 h-12 bg-teal-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <svg className="w-6 h-6 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                 </div>
                 <p className="text-sm text-surface-500 font-medium">
                   {taskSearch ? 'No matching tasks' : 'No tasks yet'}
                 </p>
                 {!taskSearch && (
-                  <p className="text-xs text-surface-400 mt-1">Tap + to add your first task</p>
+                  <>
+                    <p className="text-xs text-surface-400 mt-1">
+                      Tap + to add your first task — AI will schedule it for you.
+                    </p>
+                    <button
+                      onClick={() => setShowDrawer(true)}
+                      className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold rounded-lg transition-colors"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                      </svg>
+                      Add your first task
+                    </button>
+                  </>
                 )}
               </div>
             ) : (
@@ -718,7 +754,7 @@ export default function Home() {
         </aside>
 
         {/* Right: Schedule View */}
-        <main className={`flex-1 overflow-hidden bg-surface-50 ${mobileView === 'schedule' ? 'block' : 'hidden md:block'}`}>
+        <main className={`flex-1 overflow-hidden bg-surface-50 relative ${mobileView === 'schedule' ? 'block' : 'hidden md:block'}`} data-onboarding="schedule">
           <ScheduleView
             tasks={tasks}
             loading={loading}
@@ -731,6 +767,19 @@ export default function Home() {
             onDeleteBlock={handleDeleteBlock}
             onEditTask={setEditingTask}
           />
+          {!loading && tasks.length === 0 && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+              <div className="text-center bg-white/80 rounded-2xl p-8">
+                <div className="w-12 h-12 bg-teal-50 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <svg className="w-6 h-6 text-teal-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                </div>
+                <p className="text-sm text-surface-500 font-medium">Your schedule is clear</p>
+                <p className="text-xs text-surface-400 mt-1">Add tasks and they&apos;ll appear here automatically.</p>
+              </div>
+            </div>
+          )}
         </main>
       </div>
 
@@ -738,6 +787,7 @@ export default function Home() {
       {/* ── FAB ───────────────────────────────────────────────────────────── */}
       <button
         onClick={() => setShowDrawer(true)}
+        data-onboarding="fab"
         className={`fixed right-6 z-50 w-14 h-14 bg-teal-600 hover:bg-teal-700 text-white rounded-full shadow-lg flex items-center justify-center transition-all duration-200 ${
           timerActive ? 'bottom-52' : 'bottom-6'
         }`}
@@ -787,7 +837,13 @@ export default function Home() {
       )}
 
       {/* ── Onboarding ────────────────────────────────────────────────────── */}
-      <OnboardingTooltip />
+      {showOnboarding && (
+        <OnboardingFlow
+          calendarConnected={calendarConnected}
+          onComplete={() => { setShowOnboarding(false); setShowDrawer(true); }}
+          onSkip={() => setShowOnboarding(false)}
+        />
+      )}
 
       {/* ── PWA install prompt ────────────────────────────────────────────── */}
       <InstallPrompt />
