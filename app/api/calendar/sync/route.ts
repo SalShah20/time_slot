@@ -115,35 +115,39 @@ export async function POST(req: NextRequest) {
     );
 
     if (freebusyCals.length > 0) {
-      // 2. Run freebusy query across included calendars only
-      const freebusyRes = await calendar.freebusy.query({
-        requestBody: {
-          timeMin: startOfDay,
-          timeMax: endOfTomorrow,
-          items: freebusyCals.map((c) => ({ id: c.id! })),
-        },
-      });
-
-      // 3. Flatten all busy intervals into calendar_events rows
-      const calendars = freebusyRes.data.calendars ?? {};
-      for (const [calId, calData] of Object.entries(calendars)) {
-        const busySlots = calData.busy ?? [];
-        for (const slot of busySlots) {
-          if (!slot.start || !slot.end) continue;
-          // Synthetic ID: deterministic so upserts work correctly
-          const syntheticId = `freebusy-${calId}-${slot.start}`;
-          const calMeta = freebusyCals.find((c) => c.id === calId);
-          rows.push({
-            user_id: user.id,
-            google_event_id: syntheticId,
-            title: calMeta?.summary ?? null,
-            start_time: slot.start,
-            end_time: slot.end,
-            is_busy: true,
-            synced_at: new Date().toISOString(),
+      // 2. Fetch actual events (with titles) from each included calendar
+      await Promise.all(freebusyCals.map(async (cal) => {
+        try {
+          const eventsRes = await calendar.events.list({
+            calendarId: cal.id!,
+            timeMin: startOfDay,
+            timeMax: endOfTomorrow,
+            singleEvents: true,   // expand recurring events
+            orderBy: 'startTime',
+            maxResults: 250,
           });
+          for (const event of eventsRes.data.items ?? []) {
+            if (event.status === 'cancelled') continue;
+            // transparent = "free" — skip, we only want busy time
+            if (event.transparency === 'transparent') continue;
+            // All-day events only have start.date, not dateTime — skip for hourly view
+            const eventStart = event.start?.dateTime;
+            const eventEnd   = event.end?.dateTime;
+            if (!eventStart || !eventEnd || !event.id) continue;
+            rows.push({
+              user_id: user.id,
+              google_event_id: event.id,
+              title: event.summary ?? cal.summary ?? null,
+              start_time: eventStart,
+              end_time: eventEnd,
+              is_busy: true,
+              synced_at: new Date().toISOString(),
+            });
+          }
+        } catch (err) {
+          console.warn(`[/api/calendar/sync] events.list failed for ${cal.id}:`, err);
         }
-      }
+      }));
     }
   } catch (err: unknown) {
     const gErr = err as {
