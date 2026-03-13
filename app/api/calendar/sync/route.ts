@@ -67,7 +67,8 @@ export async function POST(req: NextRequest) {
 
   console.log('[/api/calendar/sync] Querying Google Calendar freebusy:', { startOfDay, endOfTomorrow, serverDate: now.toISOString() });
 
-  // ── Freebusy query across ALL user calendars ─────────────────────────────
+  // Single Google account only. Multi-account is not supported.
+  // Freebusy query across all calendars in the connected account.
   const rows: Array<{
     user_id: string;
     google_event_id: string;
