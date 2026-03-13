@@ -3,6 +3,7 @@ import { google } from 'googleapis';
 import { createOAuthClient, deleteCalendarEvent } from '@/lib/googleCalendar';
 import { createSupabaseAdmin } from '@/lib/supabase-server';
 import { fallbackSchedule, localTimeOnDay } from '@/lib/scheduleUtils';
+import { fetchWorkHours } from '@/lib/workHours';
 import { getTagColor } from '@/lib/tagColors';
 import type { BusyInterval } from '@/lib/scheduleUtils';
 
@@ -43,7 +44,7 @@ export async function POST(req: NextRequest) {
     // Validate channel belongs to this user
     const { data: tokenRow } = await supabase
       .from('user_tokens')
-      .select('google_access_token, google_refresh_token, google_token_expiry, webhook_channel_id')
+      .select('google_access_token, google_refresh_token, google_token_expiry, webhook_channel_id, work_timezone')
       .eq('user_id', userId)
       .single();
 
@@ -55,6 +56,9 @@ export async function POST(req: NextRequest) {
     if (!tokenRow.google_access_token) {
       return new NextResponse(null, { status: 200 });
     }
+
+    // Use the user's stored timezone (saved from settings page), fallback to UTC
+    const userTimezone: string = (tokenRow as Record<string, unknown>).work_timezone as string || 'UTC';
 
     // Build GCal client
     const oauth2Client = createOAuthClient();
@@ -79,8 +83,7 @@ export async function POST(req: NextRequest) {
 
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-    // Use UTC for simplicity in the webhook (no user timezone available)
-    const timezone = 'UTC';
+    const timezone = userTimezone;
     const now = new Date();
     const startOfDay = localTimeOnDay(now, 0, 0, timezone, 0).toISOString();
     const endOfDay   = localTimeOnDay(now, 0, 0, timezone, 2).toISOString();
@@ -147,6 +150,7 @@ export async function POST(req: NextRequest) {
     }
 
     // --- Conflict rescheduling (same logic as reschedule route) ---
+    const wh = await fetchWorkHours(supabase, userId);
 
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const twoDaysOut   = localTimeOnDay(now, 0, 0, timezone, 2).toISOString();
@@ -203,6 +207,7 @@ export async function POST(req: NextRequest) {
           task.estimated_minutes ?? 30,
           task.deadline,
           timezone,
+          wh,
         );
 
         // Check deadline feasibility

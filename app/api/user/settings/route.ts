@@ -8,7 +8,7 @@ export async function GET() {
   const supabase = createSupabaseServer();
   const { data, error } = await supabase
     .from('user_tokens')
-    .select('work_start_hour, work_end_hour, work_end_late_hour')
+    .select('work_start_hour, work_end_hour, work_end_late_hour, work_timezone')
     .eq('user_id', user.id)
     .single();
 
@@ -18,6 +18,7 @@ export async function GET() {
       workStartHour: 8,
       workEndHour: 23,
       workEndLateHour: 3,
+      timezone: null,
     });
   }
 
@@ -25,7 +26,12 @@ export async function GET() {
     workStartHour: data.work_start_hour ?? 8,
     workEndHour: data.work_end_hour ?? 23,
     workEndLateHour: data.work_end_late_hour ?? 3,
+    timezone: data.work_timezone ?? null,
   });
+}
+
+function isValidHalfHour(n: number): boolean {
+  return typeof n === 'number' && isFinite(n) && n % 0.5 === 0;
 }
 
 export async function PATCH(req: NextRequest) {
@@ -36,9 +42,10 @@ export async function PATCH(req: NextRequest) {
     workStartHour?: number;
     workEndHour?: number;
     workEndLateHour?: number;
+    timezone?: string;
   };
 
-  const { workStartHour, workEndHour, workEndLateHour } = body;
+  const { workStartHour, workEndHour, workEndLateHour, timezone } = body;
 
   // Validate types
   if (
@@ -46,33 +53,54 @@ export async function PATCH(req: NextRequest) {
     typeof workEndHour !== 'number' ||
     typeof workEndLateHour !== 'number'
   ) {
-    return NextResponse.json({ error: 'All fields must be numbers' }, { status: 400 });
+    return NextResponse.json({ error: 'All hour fields must be numbers' }, { status: 400 });
+  }
+
+  // Validate 30-min increments
+  if (!isValidHalfHour(workStartHour) || !isValidHalfHour(workEndHour) || !isValidHalfHour(workEndLateHour)) {
+    return NextResponse.json({ error: 'Hours must be in 30-minute increments' }, { status: 400 });
   }
 
   // Validate ranges
-  if (!Number.isInteger(workStartHour) || workStartHour < 0 || workStartHour > 23) {
-    return NextResponse.json({ error: 'workStartHour must be 0–23' }, { status: 400 });
+  if (workStartHour < 0 || workStartHour > 23.5) {
+    return NextResponse.json({ error: 'Start hour must be 0–23.5' }, { status: 400 });
   }
-  if (!Number.isInteger(workEndHour) || workEndHour < 0 || workEndHour > 23) {
-    return NextResponse.json({ error: 'workEndHour must be 0–23' }, { status: 400 });
+  // workEndHour can be up to 24 (midnight = end of day)
+  if (workEndHour < 0 || workEndHour > 24) {
+    return NextResponse.json({ error: 'End hour must be 0–24' }, { status: 400 });
   }
-  if (!Number.isInteger(workEndLateHour) || workEndLateHour < 0 || workEndLateHour > 6) {
-    return NextResponse.json({ error: 'workEndLateHour must be 0–6' }, { status: 400 });
+  if (workEndLateHour < 0 || workEndLateHour > 6) {
+    return NextResponse.json({ error: 'Late hour must be 0–6' }, { status: 400 });
   }
 
-  // Validate logical ordering: start < end
+  // Validate logical ordering: start < end (preferred window must be positive)
   if (workStartHour >= workEndHour) {
     return NextResponse.json({ error: 'Start hour must be before end hour' }, { status: 400 });
   }
 
+  // Validate timezone if provided
+  if (timezone) {
+    try {
+      Intl.DateTimeFormat(undefined, { timeZone: timezone });
+    } catch {
+      return NextResponse.json({ error: `Invalid timezone: "${timezone}"` }, { status: 400 });
+    }
+  }
+
   const supabase = createSupabaseServer();
+
+  const updatePayload: Record<string, unknown> = {
+    work_start_hour: workStartHour,
+    work_end_hour: workEndHour,
+    work_end_late_hour: workEndLateHour,
+  };
+  if (timezone) {
+    updatePayload.work_timezone = timezone;
+  }
+
   const { error } = await supabase
     .from('user_tokens')
-    .update({
-      work_start_hour: workStartHour,
-      work_end_hour: workEndHour,
-      work_end_late_hour: workEndLateHour,
-    })
+    .update(updatePayload)
     .eq('user_id', user.id);
 
   if (error) {
@@ -80,5 +108,5 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ workStartHour, workEndHour, workEndLateHour });
+  return NextResponse.json({ workStartHour, workEndHour, workEndLateHour, timezone: timezone ?? null });
 }

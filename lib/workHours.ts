@@ -19,9 +19,23 @@ export async function fetchWorkHours(supabase: SupabaseClient, userId: string): 
   };
 }
 
-/** Format a 24h hour value for display in an LLM prompt (e.g. 8 → "8 AM", 23 → "11 PM"). */
+/** Fetch the user's stored timezone, falling back to null. */
+export async function fetchUserTimezone(supabase: SupabaseClient, userId: string): Promise<string | null> {
+  const { data } = await supabase
+    .from('user_tokens')
+    .select('work_timezone')
+    .eq('user_id', userId)
+    .single();
+
+  return data?.work_timezone ?? null;
+}
+
+/** Format a decimal hour value for display in an LLM prompt (e.g. 8 → "8 AM", 23.5 → "11:30 PM", 24 → "12 AM"). */
 export function formatHourForPrompt(h: number): string {
-  if (h === 0 || h === 24) return '12 AM';
-  if (h === 12) return '12 PM';
-  return h < 12 ? `${h} AM` : `${h - 12} PM`;
+  const hour = Math.floor(h) % 24;
+  const min = Math.round((h - Math.floor(h)) * 60);
+  const suffix = hour < 12 ? 'AM' : 'PM';
+  const h12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+  if (min === 0) return `${h12} ${suffix}`;
+  return `${h12}:${min.toString().padStart(2, '0')} ${suffix}`;
 }

@@ -25,6 +25,13 @@ export const WORK_START_HOUR = 8; // 8 AM
  */
 export const LATE_NIGHT_MAX_HOUR = 3; // 3 AM
 
+/** Split a decimal hour (e.g. 8.5) into [hour, minute] (e.g. [8, 30]). */
+export function splitDecimalHour(h: number): [number, number] {
+  const hour = Math.floor(h);
+  const minute = Math.round((h - hour) * 60);
+  return [hour, minute];
+}
+
 // ─── Timezone-aware helpers ────────────────────────────────────────────────
 
 /**
@@ -81,7 +88,8 @@ export function localTimeOnDay(date: Date, hour: number, minute: number, tz: str
 function snapToWorkHours(t: Date, tz: string, wh: WorkHours = DEFAULT_WORK_HOURS): Date {
   const h = localHourIn(t, tz);
   if (h >= wh.workEndLateHour && h < wh.workStartHour) {
-    return localTimeOnDay(t, wh.workStartHour, 0, tz, 0);
+    const [sh, sm] = splitDecimalHour(wh.workStartHour);
+    return localTimeOnDay(t, sh, sm, tz, 0);
   }
   return t;
 }
@@ -120,9 +128,10 @@ export function fallbackSchedule(
   const fiveDaysFromNow = new Date(now.getTime() + DAYS_UNTIL_DEFER * 24 * 60 * 60_000);
   const useDeferredStart = deadline && new Date(deadline) > fiveDaysFromNow;
 
+  const [wsH, wsM] = splitDecimalHour(wh.workStartHour);
   let candidate: Date;
   if (useDeferredStart) {
-    candidate = localTimeOnDay(now, wh.workStartHour, 0, timezone, 1);
+    candidate = localTimeOnDay(now, wsH, wsM, timezone, 1);
   } else {
     candidate = snapToWorkHours(new Date(now.getTime() + 60 * 60_000), timezone, wh);
   }
@@ -145,7 +154,7 @@ export function fallbackSchedule(
     const endInBlackout     = endH >= wh.workEndLateHour && endH < wh.workStartHour;
     const endCrossesIntoDay = crossDay && endH >= wh.workStartHour;
     if (endInBlackout || endCrossesIntoDay) {
-      candidate = localTimeOnDay(end, wh.workStartHour, 0, timezone, 0);
+      candidate = localTimeOnDay(end, wsH, wsM, timezone, 0);
       changed   = true;
       continue;
     }
@@ -252,6 +261,8 @@ export function findFreeBlocksInWindow(
 
   // For each gap, extract valid sub-blocks respecting the blackout
   const freeBlocks: FreeBlock[] = [];
+  const [startH, startM] = splitDecimalHour(wh.workStartHour);
+  const [lateH, lateM]   = splitDecimalHour(wh.workEndLateHour);
 
   for (const gap of gaps) {
     let subCursor = gap.start;
@@ -263,15 +274,15 @@ export function findFreeBlocksInWindow(
 
       // Snap out of blackout
       if (h >= wh.workEndLateHour && h < wh.workStartHour) {
-        subCursor = localTimeOnDay(subCursor, wh.workStartHour, 0, timezone, 0);
+        subCursor = localTimeOnDay(subCursor, startH, startM, timezone, 0);
         continue;
       }
 
       // Determine end of current valid window (next late-hour boundary)
       const validWindowEnd: Date =
         h < wh.workEndLateHour
-          ? localTimeOnDay(subCursor, wh.workEndLateHour, 0, timezone, 0)
-          : localTimeOnDay(subCursor, wh.workEndLateHour, 0, timezone, 1);
+          ? localTimeOnDay(subCursor, lateH, lateM, timezone, 0)
+          : localTimeOnDay(subCursor, lateH, lateM, timezone, 1);
 
       const blockEnd = new Date(Math.min(validWindowEnd.getTime(), gap.end.getTime()));
       const durationMinutes = (blockEnd.getTime() - subCursor.getTime()) / 60_000;
@@ -281,7 +292,7 @@ export function findFreeBlocksInWindow(
       }
 
       // Advance past the blackout to next workStartHour
-      subCursor = localTimeOnDay(validWindowEnd, wh.workStartHour, 0, timezone, 0);
+      subCursor = localTimeOnDay(validWindowEnd, startH, startM, timezone, 0);
     }
   }
 

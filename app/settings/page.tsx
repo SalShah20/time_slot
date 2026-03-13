@@ -3,14 +3,9 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
-function formatHour(h: number): string {
-  if (h === 0 || h === 24) return '12:00 AM';
-  if (h === 12) return '12:00 PM';
-  return h < 12 ? `${h}:00 AM` : `${h - 12}:00 PM`;
-}
-
 function formatHalfHour(h: number): string {
-  const whole = Math.floor(h);
+  if (h === 24) return '12:00 AM';
+  const whole = Math.floor(h) % 24;
   const isHalf = h % 1 !== 0;
   if (whole === 0 && !isHalf) return '12:00 AM';
   if (whole === 0 && isHalf) return '12:30 AM';
@@ -18,6 +13,13 @@ function formatHalfHour(h: number): string {
   if (whole === 12 && isHalf) return '12:30 PM';
   if (whole < 12) return `${whole}:${isHalf ? '30' : '00'} AM`;
   return `${whole - 12}:${isHalf ? '30' : '00'} PM`;
+}
+
+/** Generate an array of half-hour values from `from` to `to` (inclusive). */
+function halfHourRange(from: number, to: number): number[] {
+  const result: number[] = [];
+  for (let h = from; h <= to; h += 0.5) result.push(h);
+  return result;
 }
 
 export default function SettingsPage() {
@@ -48,7 +50,12 @@ export default function SettingsPage() {
       const res = await fetch('/api/user/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workStartHour, workEndHour, workEndLateHour }),
+        body: JSON.stringify({
+          workStartHour,
+          workEndHour,
+          workEndLateHour,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }),
       });
       if (!res.ok) {
         const data = await res.json() as { error?: string };
@@ -64,16 +71,15 @@ export default function SettingsPage() {
     }
   }
 
-  // Start options: 5am–11am in 1h increments
-  const startOptions: number[] = [];
-  for (let h = 5; h <= 11; h++) startOptions.push(h);
+  // Start options: 5 AM – 11 AM in 30-min steps
+  const startOptions = halfHourRange(5, 11);
 
-  // End options: 5pm–11pm in 1h increments
-  const endOptions: number[] = [];
-  for (let h = 17; h <= 23; h++) endOptions.push(h);
+  // End options: 5 PM – 12 AM (midnight) in 30-min steps
+  // 24 represents midnight (end of day)
+  const endOptions = halfHourRange(17, 24);
 
-  // Late hour options
-  const lateOptions = [0, 1, 2, 3, 4, 5, 6];
+  // Late hour options: 12 AM – 6 AM in 30-min steps
+  const lateOptions = halfHourRange(0, 6);
 
   const selectClass =
     'w-full border border-surface-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-surface-900 bg-white appearance-none';
@@ -116,7 +122,7 @@ export default function SettingsPage() {
                   className={selectClass}
                 >
                   {startOptions.map((h) => (
-                    <option key={h} value={h}>{formatHour(h)}</option>
+                    <option key={h} value={h}>{formatHalfHour(h)}</option>
                   ))}
                 </select>
               </div>
@@ -132,7 +138,9 @@ export default function SettingsPage() {
                   className={selectClass}
                 >
                   {endOptions.map((h) => (
-                    <option key={h} value={h}>{formatHour(h)}</option>
+                    <option key={h} value={h}>
+                      {h === 24 ? '12:00 AM (midnight)' : formatHalfHour(h)}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -156,7 +164,7 @@ export default function SettingsPage() {
               </div>
 
               <p className="text-xs text-surface-400">
-                Tasks are never scheduled between {formatHour(workEndLateHour)} and {formatHour(workStartHour)}.
+                Tasks are never scheduled between {formatHalfHour(workEndLateHour)} and {formatHalfHour(workStartHour)}.
               </p>
             </div>
 

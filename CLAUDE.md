@@ -18,6 +18,7 @@ Requires `.env.local`:
 ```
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=         # for webhook route (admin client)
 GOOGLE_CLIENT_ID=                  # from google-calendar-mcp/gcp-oauth.keys.json
 GOOGLE_CLIENT_SECRET=              # from google-calendar-mcp/gcp-oauth.keys.json
 NEXT_PUBLIC_APP_URL=http://localhost:3000
@@ -73,18 +74,20 @@ This means navigating back to a previously-visited date shows cached data instan
 
 New tasks are scheduled via `scheduleWithLLM()`:
 1. Fetches existing tasks + Google Calendar events for today + tomorrow as context
-2. Calls GPT-4o-mini with a structured prompt (preferred 8am–11pm, last resort up to 3am, hard blackout 3am–8am, no overlaps, respect deadlines, start ≥10 min from now)
+2. Calls GPT-4o-mini with a structured prompt (uses user's configured working hours, no overlaps, respect deadlines, start ≥10 min from now)
 3. **Validates** the LLM result against `busyIntervals` — if the result overlaps anything, it falls back automatically
 4. Falls back to `fallbackSchedule()` (deterministic free-slot finder) if: API key missing, LLM errors, or overlap detected
 
-`fallbackSchedule()` in `lib/scheduleUtils.ts`: sorts busy intervals, walks forward from now+10min to find the first free gap. Scheduling window priority:
-1. **Preferred**: 8 AM – 11 PM
-2. **Last resort**: 11 PM – 3 AM (used only when earlier slots are fully booked, e.g. a packed day with an imminent deadline)
-3. **Hard blackout**: 3 AM – 8 AM (never scheduled)
+`fallbackSchedule()` in `lib/scheduleUtils.ts`: sorts busy intervals, walks forward from now+10min to find the first free gap. Scheduling window priority (configurable per user, see "Configurable working hours"):
+1. **Preferred**: workStartHour – workEndHour (default 8 AM – 11 PM)
+2. **Last resort**: workEndHour – workEndLateHour (default 11 PM – 3 AM)
+3. **Hard blackout**: workEndLateHour – workStartHour (default 3 AM – 8 AM, never scheduled)
 
-Falls back to 8 AM the next day only when all slots through 3 AM are also unavailable.
+Falls back to workStartHour the next day only when all slots through the late hour are also unavailable.
 
-Key constant: `WORK_START_HOUR = 8` in `lib/scheduleUtils.ts`. Both LLM prompts (`create` and `batch-create`) and the validation checks in `create/route.ts` all use 8 AM as the earliest allowed start.
+`WORK_START_HOUR = 8` and `LATE_NIGHT_MAX_HOUR = 3` in `lib/scheduleUtils.ts` are the default constants. `DEFAULT_WORK_HOURS = { workStartHour: 8, workEndHour: 23, workEndLateHour: 3 }`. Both LLM prompts and validation use dynamic hours from the user's settings via `formatHourForPrompt()`.
+
+**Fixed-time tasks** skip LLM scheduling entirely — they use the user-specified time directly.
 
 ### Batch Scheduling (`app/api/tasks/batch-create/route.ts`, `components/TaskDrawer.tsx`)
 
@@ -94,6 +97,8 @@ Users can queue multiple tasks and schedule them all at once:
 - The batch API fetches busy intervals **once**, then makes **one LLM call** for all tasks together (fewer API calls than N individual creates)
 - Each LLM result is validated for overlaps; falls back per-task if needed
 - All tasks are bulk-inserted in one DB call; GCal events are created in parallel
+- Fixed-time tasks are partitioned out before the LLM call and added as busy intervals so auto-scheduled tasks avoid them
+- After LLM results, `applyBatchSplitting()` post-processes tasks that miss their deadlines (see "Task splitting")
 
 ### Google Calendar integration (`lib/googleCalendar.ts`, `app/api/calendar/`)
 
@@ -102,7 +107,9 @@ OAuth 2.0 via `googleapis`. Credentials in `google-calendar-mcp/gcp-oauth.keys.j
 **Shared helpers in `lib/googleCalendar.ts`:**
 - `createOAuthClient()` — builds an `OAuth2Client`
 - `getCalendarClient(supabase, userId)` — fetches stored tokens, returns authenticated `calendar` client or `null` if not connected
-- `deleteCalendarEvent(calendar, eventId)` — non-fatal event deletion (logs on error)
+- `getOrCreateTimeSlotCalendar(calendar, supabase, userId)` — creates a dedicated "TimeSlot" calendar (brand teal color) or returns the stored ID; falls back to `'primary'` on permission errors; stores ID in `user_tokens.google_calendar_id`
+- `deleteCalendarEvent(calendar, eventId)` — non-fatal event deletion with fallback: tries provided calendarId first, then enumerates all writable calendars
+- `fetchCalendarEventsForDay(calendar, date)` — fetches busy intervals for the scheduler; filters cancelled events
 
 **API routes:**
 - `GET /api/calendar/oauth` — redirects to Google consent screen
@@ -119,8 +126,16 @@ OAuth 2.0 via `googleapis`. Credentials in `google-calendar-mcp/gcp-oauth.keys.j
 
 **Auto-resync:** `app/page.tsx` syncs GCal every 5 minutes when connected, then calls `POST /api/tasks/reschedule` to fix any conflicts that appeared.
 
+**GCal webhook (real-time rescheduling):**
+- `POST /api/calendar/webhook` — receives Google push notifications when the user's calendar changes; triggers sync + reschedule
+- HEAD request returns 200 (Google validation ping)
+- Channel registered in OAuth callback; auto-renewed in sync route when <48h from expiry (6-day channels)
+- Token in `X-Goog-Channel-Token` = user_id; validated against `webhook_channel_id` in DB
+- Always returns 200 to prevent Google retry storms
+- Requires `SUPABASE_SERVICE_ROLE_KEY` env var; uses `createSupabaseAdmin()` from `lib/supabase-server.ts`
+
 **Setup checklist:**
-1. Run all migrations through `007` in the Supabase SQL editor
+1. Run all migrations through `013` in the Supabase SQL editor
 2. Add `http://localhost:3000/api/calendar/callback` as an authorized redirect URI in GCP Console
 3. Add `http://localhost:3000/auth/callback` to Supabase Auth → URL Configuration → Redirect URLs
 
@@ -135,7 +150,7 @@ The endpoint merges two sources — `calendar_blocks` (manual) and `calendar_eve
 
 ### Conflict rescheduling (`app/api/tasks/reschedule/route.ts`)
 
-Called after every calendar sync. Fetches pending tasks for today+tomorrow, checks each against GCal busy events, and for any conflict: finds a new free slot with `fallbackSchedule()`, deletes the old GCal event, creates a new one, and updates the task in DB.
+Called after every calendar sync. Fetches pending tasks for today+tomorrow, checks each against GCal busy events, and for any conflict: finds a new free slot with `fallbackSchedule()`, deletes the old GCal event, creates a new one, and updates the task in DB. Fixed-time tasks (`is_fixed = true`) are always skipped. If no slot is available before the task's deadline, sets `needs_rescheduling = true` (shown as amber warning in sidebar).
 
 ### Timer state machine (`lib/timerService.ts`)
 
@@ -160,16 +175,93 @@ Three notification types, all using localStorage keys to prevent duplicates:
 
 Permission is requested once on mount via `requestPermission()`.
 
+### Brain dump (`app/api/tasks/brain-dump/route.ts`, `components/BrainDumpInput.tsx`)
+
+Natural language task parsing — users paste freeform text (one task per line) and the LLM parses it into structured `TaskInput` objects:
+- Deadlines: "by Friday", "tomorrow", "by 3 PM"
+- Duration: "2 hours", "90 min", "1.5h"
+- Priority: "urgent", "high", "low"
+- Tags: inferred from task content
+- Fixed times: "at 3 PM" → `isFixed=true`; "by 3 PM" → deadline only
+
+The brain dump textarea is the **default input mode** in `TaskDrawer` batch mode. Users can switch to the structured form via "Use form instead" link. Parsed tasks are queued for review before batch scheduling.
+
+`Cmd+Enter` / `Ctrl+Enter` submits. LLM uses GPT-4o-mini with timezone-aware date resolution. Returns `{ tasks: TaskInput[] }`.
+
+### Task splitting (`lib/splitSchedule.ts`)
+
+Long tasks that would miss their deadline are automatically split into multiple focused sessions:
+
+**Trigger** (in `create/route.ts`): `shouldSplit = deadline && finalScheduledEnd > deadline && deadline > now`
+
+**Algorithm** (`computeSplitSessions()`):
+1. **LLM splitter**: GPT-4o-mini divides task into sessions (30–90 min each, 30-min buffer between, all before deadline)
+2. **Fallback deterministic spread**: greedy two-pass algorithm if LLM fails
+
+**Data model** (migration `009`):
+- Session 1 (canonical): `session_number=1, total_sessions=N, parent_task_id=null`
+- Sessions 2–N (children): `session_number=k, total_sessions=N, parent_task_id=<session1.id>`
+
+**Response format**: `/api/tasks/create` always returns `{ tasks: TaskRow[] }` — single-task = array of 1, split = array of N.
+
+**UI**: sidebar filters out child sessions (`!t.parent_task_id`); `TaskBlock` in ScheduleView shows `(X/Y)` suffix; stats route filters `.is('parent_task_id', null)` to avoid double-counting.
+
+### Fixed-time tasks (`is_fixed`)
+
+Tasks pinned to a specific time (e.g., "meeting at 3 PM") that skip auto-scheduling and never auto-reschedule.
+
+- `is_fixed BOOLEAN DEFAULT false` on `tasks` (migration `011`)
+- `TaskForm` has pin icon toggle; when enabled, shows date + time inputs separate from deadline
+- Create route: fixed tasks skip LLM scheduling, conflict checks, and splitting
+- Batch-create: fixed tasks partitioned out before LLM call, added as busy intervals
+- Reschedule route: `if (task.is_fixed) continue;`
+- PATCH route: `taskIsFixed` guard prevents deadline-driven auto-reschedule
+- Brain dump: LLM detects "at 3pm" (fixed) vs "by 3pm" (deadline)
+- UI: pin icon + "Pinned" label in sidebar, ScheduleView TaskBlock, TaskEditModal toggle
+
+### Configurable working hours (`lib/workHours.ts`, `app/settings/page.tsx`)
+
+Users can customize their scheduling window via `/settings` in 30-minute increments:
+- `workStartHour` (default 8) — earliest time tasks can start (5 AM – 11 AM)
+- `workEndHour` (default 23) — end of preferred window (5 PM – 12 AM midnight, where midnight = 24)
+- `workEndLateHour` (default 3) — absolute latest for last-resort scheduling (12 AM – 6 AM)
+- `work_timezone` — user's IANA timezone, saved automatically when settings are saved
+
+All values are stored as `REAL` (migration `013`) to support half-hour granularity (e.g., 8.5 = 8:30 AM). Stored in `user_tokens` table. API: `GET/PATCH /api/user/settings`. Avatar dropdown links to Settings page.
+
+`fetchWorkHours(supabase, userId)` loads preferences with fallback to `DEFAULT_WORK_HOURS`. `fetchUserTimezone(supabase, userId)` loads the stored timezone. `formatHourForPrompt(h)` converts decimal hours to "X:XX AM/PM" for LLM prompts. All scheduling routes (create, batch-create, brain-dump, reschedule, webhook) use the user's configured hours.
+
+`splitDecimalHour(h)` in `scheduleUtils.ts` converts decimal hours (e.g., 8.5) to `[hour, minute]` pairs (e.g., `[8, 30]`) for use with `localTimeOnDay`.
+
+### Timing history (`lib/timingHistory.ts`)
+
+The system learns from past task durations to improve future estimates:
+- Fetches up to 50 completed tasks with actual duration data
+- Computes per-tag averages (e.g., "Study avg 90 min from 12 tasks")
+- Extracts 20 most recent tasks for LLM title-matching
+- Fed into `estimateDurationWithLLM()` for personalized duration estimates
+
+### Custom user tags (`lib/userTags.ts`, `lib/guessTag.ts`)
+
+Beyond the 8 built-in tags (Study, Work, Personal, Exercise, Health, Social, Errands, Other), users can enter custom tags:
+- Stored client-side in localStorage key `ts_user_tags`
+- Custom tags get deterministic colors from `CUSTOM_PALETTE` in `lib/tagColors.ts` (hashed by tag name)
+- `lib/guessTag.ts`: LLM-powered tag suggestion via GPT-4o-mini with keyword regex fallback
+
+### Batch block creation (`app/api/blocks/batch/route.ts`)
+
+Bulk insert up to 90 manual calendar blocks in a single request: `POST /api/blocks/batch` with `{ blocks: Array<{ title, start_time, end_time }> }`.
+
 ### Database schema
 
 Six tables in Supabase (migrations in `supabase/migrations/`, run manually in order):
 
 | Table | Key columns |
 |-------|-------------|
-| `tasks` | `id, user_id, title, description, tag, priority, estimated_minutes, actual_duration, deadline, scheduled_start, scheduled_end, status, google_event_id` |
+| `tasks` | `id, user_id, title, description, tag, priority, estimated_minutes, actual_duration, deadline, scheduled_start, scheduled_end, status, google_event_id, is_fixed, session_number, total_sessions, parent_task_id, needs_rescheduling` |
 | `active_timers` | `user_id (UNIQUE), task_id, state, started_at, paused_at, current_break_started_at, total_break_seconds` |
 | `timer_sessions` | `task_id, user_id, type (work/break), started_at, ended_at, duration` |
-| `user_tokens` | `user_id, google_access_token, google_refresh_token, google_token_expiry` |
+| `user_tokens` | `user_id, google_access_token, google_refresh_token, google_token_expiry, google_calendar_id, webhook_channel_id, webhook_resource_id, webhook_expires_at, work_start_hour (REAL), work_end_hour (REAL), work_end_late_hour (REAL), work_timezone` |
 | `calendar_events` | `user_id, google_event_id, title, start_time, end_time, is_busy` — read-only GCal cache |
 | `calendar_blocks` | `user_id, title, start_time, end_time, is_busy` — user-created manual blocks |
 
@@ -181,10 +273,18 @@ Six tables in Supabase (migrations in `supabase/migrations/`, run manually in or
 5. `005_fix_tag_constraint.sql` — fixes tag CHECK constraint
 6. `006_calendar_blocks.sql` — adds `calendar_blocks` + RLS
 7. `007_add_google_event_id.sql` — adds `google_event_id TEXT` to `tasks`
+8. `008_webhook_channels.sql` — adds `webhook_channel_id/resource_id/expires_at` to `user_tokens`; adds `needs_rescheduling BOOLEAN` to `tasks`
+9. `009_task_sessions.sql` — adds `session_number, total_sessions, parent_task_id` to `tasks`
+10. `010_google_calendar_id.sql` — adds `google_calendar_id TEXT` to `user_tokens`
+11. `011_add_is_fixed.sql` — adds `is_fixed BOOLEAN DEFAULT false` to `tasks`
+12. `012_working_hours.sql` — adds `work_start_hour, work_end_hour, work_end_late_hour` (INTEGER) to `user_tokens`
+13. `013_work_hours_real.sql` — changes work hour columns to `REAL` for 30-min granularity; adds `work_timezone TEXT`
 
 ### Tag / color system
 
-`lib/tagColors.ts` maps tag names → `{ hex, bg, text, border, gcalColorId }`. Tags: Study, Work, Personal, Exercise, Health, Social, Errands, Other.
+`lib/tagColors.ts` maps tag names → `{ hex, bg, text, border, gcalColorId }`. Built-in tags: Study, Work, Personal, Exercise, Health, Social, Errands, Other. Custom tags are assigned deterministic colors from `CUSTOM_PALETTE` (indigo, cyan, yellow, rose, lime, violet, sky, amber) based on tag name hash.
+
+Priority also maps to GCal colors: high → colorId `'11'` (Tomato), medium → `'10'` (Sage), low → `'8'` (Graphite).
 
 Custom Tailwind palette in `tailwind.config.ts`:
 - `teal-{50–900}` — primary brand (`teal-600` = `#027381` is the main action color)
@@ -198,29 +298,40 @@ Use `teal-600` / `hover:teal-700` for primary buttons. Use `surface-*` for all n
 |------|---------|
 | `app/page.tsx` | Main dashboard, calendar sync loop, notification setup, per-date blocks cache |
 | `app/login/page.tsx` | Google sign-in page (footer links to privacy/terms) |
+| `app/settings/page.tsx` | User settings — configurable working hours |
 | `app/privacy/page.tsx` | Privacy Policy (public, no auth required) |
 | `app/terms/page.tsx` | Terms of Service (public, no auth required) |
 | `app/auth/callback/route.ts` | Supabase OAuth code exchange |
 | `middleware.ts` | Auth guard — redirects unauthenticated to `/login`; exempts `/privacy`, `/terms` |
-| `app/api/tasks/create/route.ts` | LLM scheduling + GCal event creation |
-| `app/api/tasks/batch-create/route.ts` | Batch scheduling (one LLM call for N tasks) |
-| `app/api/tasks/reschedule/route.ts` | Conflict detection + GCal event replace |
+| `app/api/tasks/create/route.ts` | LLM scheduling + task splitting + GCal event creation |
+| `app/api/tasks/batch-create/route.ts` | Batch scheduling (one LLM call for N tasks) + batch splitting |
+| `app/api/tasks/brain-dump/route.ts` | Natural language task parsing (freeform text → structured tasks) |
+| `app/api/tasks/reschedule/route.ts` | Conflict detection + GCal event replace (skips fixed tasks) |
 | `app/api/tasks/[id]/route.ts` | `PATCH` — edit task fields + update GCal event |
 | `app/api/tasks/[id]/complete/route.ts` | Quick-complete (no timer) + GCal cleanup |
 | `app/api/timer/complete/route.ts` | Timer completion + GCal cleanup |
-| `app/api/calendar/sync/route.ts` | Fetch GCal events → cache in `calendar_events` |
+| `app/api/calendar/sync/route.ts` | Fetch GCal events → cache in `calendar_events`; auto-renew webhook |
+| `app/api/calendar/webhook/route.ts` | GCal push notification receiver — sync + reschedule on external changes |
 | `app/api/blocks/route.ts` | Merge manual blocks + GCal events; deduplicate task-owned events |
-| `lib/googleCalendar.ts` | OAuth client, `getCalendarClient()`, `deleteCalendarEvent()` |
-| `lib/scheduleUtils.ts` | `fallbackSchedule()` deterministic free-slot finder; `WORK_START_HOUR = 8` |
+| `app/api/blocks/batch/route.ts` | Bulk insert up to 90 manual calendar blocks |
+| `app/api/user/settings/route.ts` | `GET/PATCH` — read/write user working hours |
+| `lib/googleCalendar.ts` | OAuth client, `getCalendarClient()`, `getOrCreateTimeSlotCalendar()`, `deleteCalendarEvent()` |
+| `lib/scheduleUtils.ts` | `fallbackSchedule()`, `findFreeBlocksInWindow()`; exports `WORK_START_HOUR`, `LATE_NIGHT_MAX_HOUR` |
+| `lib/splitSchedule.ts` | `computeSplitSessions()` — LLM + greedy fallback for splitting long tasks |
+| `lib/workHours.ts` | `fetchWorkHours()`, `formatHourForPrompt()` — per-user scheduling window |
+| `lib/timingHistory.ts` | Fetches completed task history for personalized duration estimates |
 | `lib/timerService.ts` | localStorage timer state machine + 30s DB sync |
 | `lib/estimateDuration.ts` | `estimateDurationWithLLM()` — GPT-4o-mini duration estimate with tag-based fallback |
 | `lib/notifications.ts` | Browser notification helpers |
-| `lib/tagColors.ts` | Tag → color mapping |
+| `lib/tagColors.ts` | Tag → color mapping (built-in + custom tags with deterministic palette) |
+| `lib/userTags.ts` | Custom tag persistence (localStorage) |
+| `lib/guessTag.ts` | LLM-powered tag suggestion with keyword regex fallback |
 | `lib/supabase.ts` | Browser Supabase client singleton |
-| `lib/supabase-server.ts` | `createSupabaseServer()` + `getAuthUser()` for API routes |
-| `components/TaskDrawer.tsx` | Slide-up drawer with single/batch mode toggle |
-| `components/TaskForm.tsx` | Task creation form; supports `onQueue` prop for batch mode |
-| `components/TaskEditModal.tsx` | Modal to edit existing pending tasks |
+| `lib/supabase-server.ts` | `createSupabaseServer()`, `getAuthUser()`, `createSupabaseAdmin()` for API routes |
+| `components/TaskDrawer.tsx` | Slide-up drawer; brain dump (default) + structured form modes |
+| `components/BrainDumpInput.tsx` | Freeform textarea for natural language task entry |
+| `components/TaskForm.tsx` | Structured task creation form; fixed-time pin toggle; supports `onQueue` prop for batch mode |
+| `components/TaskEditModal.tsx` | Modal to edit existing pending tasks; fixed-time toggle |
 | `components/ScheduleView.tsx` | Hourly calendar grid with task blocks + GCal overlays |
 | `components/CornerTimerWidget.tsx` | Floating active timer display |
 | `components/TimerSelector.tsx` | Modal to pick which task to time |
@@ -249,19 +360,23 @@ Configured via `@ducanh2912/next-pwa` in `next.config.mjs`:
 
 `lib/estimateDuration.ts` exports `estimateDurationWithLLM(title, description, tag, priority)`:
 - Calls GPT-4o-mini to estimate minutes; falls back to tag-based defaults if API key missing or call fails
+- Uses the user's timing history (`lib/timingHistory.ts`) — per-tag averages and 20 most recent tasks — for personalized estimates
 - Called by both `api/tasks/create` and `api/tasks/batch-create` when `estimatedMinutes` is absent
 - In `TaskForm.tsx` the first duration option is **"AI Estimate"** (value `-1`); when selected, `estimatedMinutes` is sent as `undefined` and the server estimates it
 - Queue list in `TaskDrawer` shows "AI estimate" label for tasks without a manual duration
 
 ## Scheduling window
 
-- **Preferred**: 8 AM – 11 PM
-- **Last resort**: 11 PM – 3 AM (used only when earlier slots are all taken; college students work late)
-- **Hard blackout**: 3 AM – 8 AM (never scheduled)
-- `WORK_START_HOUR = 8` in `lib/scheduleUtils.ts` — single source of truth for the start boundary
-- Both LLM prompts (create and batch-create) say "preferred 8 AM–11 PM; last resort up to 3 AM; never 3 AM–8 AM"
-- `fallbackSchedule()` snaps any candidate in the 3–8 AM blackout forward to 8 AM via `snapToWorkHours()`
-- LLM validation in `create/route.ts` rejects starts/ends in 3–8 AM; rejects cross-day ends at 8 AM+; allows midnight–3 AM
+Configurable per user via `/settings` in 30-minute increments (defaults shown):
+- **Preferred**: workStartHour–workEndHour (default 8 AM – 11 PM)
+- **Last resort**: workEndHour–workEndLateHour (default 11 PM – 3 AM; used only when earlier slots are all taken)
+- **Hard blackout**: workEndLateHour–workStartHour (default 3 AM – 8 AM; never scheduled)
+- `DEFAULT_WORK_HOURS = { workStartHour: 8, workEndHour: 23, workEndLateHour: 3 }` in `lib/scheduleUtils.ts`
+- User overrides stored as `REAL` in `user_tokens` table (e.g., 8.5 = 8:30 AM); loaded via `fetchWorkHours()` from `lib/workHours.ts`
+- User's timezone stored in `work_timezone` column; used by webhook route for server-initiated scheduling
+- All LLM prompts (create, batch-create, brain-dump) use dynamic hours via `formatHourForPrompt()`
+- `fallbackSchedule()` snaps any candidate in the blackout window forward to workStartHour via `snapToWorkHours()`
+- LLM validation in `create/route.ts` rejects starts/ends in the blackout window; allows midnight–workEndLateHour
 
 ## Legal pages
 
@@ -277,3 +392,4 @@ Links to these pages appear in:
 
 - **Smarter batch scheduling**: Let users reorder the batch queue before submitting to influence scheduling priority
 - **Vercel deployment**: Add all env vars to Vercel project settings
+- **PWA icons**: Replace `public/icon.svg` with real PNG files (`icon-192.png`, `icon-512.png`)
