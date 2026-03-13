@@ -13,6 +13,7 @@ export default function BrainDumpInput({ onTasksQueued, onSwitchToForm }: Props)
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [hintsOpen, setHintsOpen] = useState(false);
 
   async function handleSubmit() {
     const trimmed = input.trim();
@@ -52,6 +53,16 @@ export default function BrainDumpInput({ onTasksQueued, onSwitchToForm }: Props)
 
   return (
     <div className="space-y-3">
+      {/* Hint above textarea */}
+      <div>
+        <p className="text-sm font-semibold text-teal-600">
+          One task per line — AI schedules everything automatically.
+        </p>
+        <p className="text-xs text-surface-500 mt-0.5">
+          Include deadlines (&ldquo;by Friday&rdquo;), duration (&ldquo;2 hours&rdquo;), or priority (&ldquo;urgent&rdquo;) — or leave them out and AI will estimate.
+        </p>
+      </div>
+
       {/* Textarea */}
       <div className="relative">
         <textarea
@@ -63,14 +74,14 @@ export default function BrainDumpInput({ onTasksQueued, onSwitchToForm }: Props)
               void handleSubmit();
             }
           }}
-          placeholder={"• Finish CS homework by Friday 2 hours\n• Study for exam tomorrow high priority\n• Gym workout 1hr personal\n• Submit job app Monday work"}
+          placeholder={"Finish CS homework by Friday 2 hours\nStudy for exam tomorrow high priority\nGym workout 1hr personal\nSubmit job app Monday work"}
           rows={7}
           className="w-full px-3 py-3 border border-surface-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-surface-900 placeholder:text-surface-400 resize-none leading-relaxed"
           style={{ fontSize: '16px', minHeight: '180px' }}
         />
         {input.trim() && (
           <span className="absolute bottom-2.5 right-3 text-xs text-surface-400 pointer-events-none bg-white px-1">
-            ⌘↵
+            {'\u2318\u21B5'}
           </span>
         )}
       </div>
@@ -83,10 +94,36 @@ export default function BrainDumpInput({ onTasksQueued, onSwitchToForm }: Props)
         <p className="text-sm text-teal-700 bg-teal-50 px-3 py-2 rounded-lg font-medium">{success}</p>
       )}
 
-      {/* Hint */}
-      <p className="text-xs text-surface-400">
-        One task per line.
-      </p>
+      {/* Collapsible "What can I include?" hint */}
+      <div>
+        <button
+          type="button"
+          onClick={() => setHintsOpen((v) => !v)}
+          className="text-xs text-teal-600 underline underline-offset-2 cursor-pointer hover:text-teal-700 transition-colors"
+        >
+          {hintsOpen ? 'Hide hints' : 'What can I include?'}
+        </button>
+        {hintsOpen && (
+          <div className="mt-2 bg-teal-50 rounded-lg px-3 py-2.5 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs text-surface-600">
+            <div>
+              <span className="font-medium text-surface-700">Deadlines</span>
+              <p className="text-surface-500">&ldquo;by Friday&rdquo;, &ldquo;due tomorrow&rdquo;, &ldquo;end of week&rdquo;</p>
+            </div>
+            <div>
+              <span className="font-medium text-surface-700">Duration</span>
+              <p className="text-surface-500">&ldquo;2 hours&rdquo;, &ldquo;30 mins&rdquo;, &ldquo;quick&rdquo;</p>
+            </div>
+            <div>
+              <span className="font-medium text-surface-700">Priority</span>
+              <p className="text-surface-500">&ldquo;urgent&rdquo;, &ldquo;high priority&rdquo;, &ldquo;when I have time&rdquo;</p>
+            </div>
+            <div>
+              <span className="font-medium text-surface-700">Tag</span>
+              <p className="text-surface-500">&ldquo;for work&rdquo;, &ldquo;personal&rdquo;, &ldquo;study&rdquo;</p>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Submit */}
       <button
@@ -97,22 +134,22 @@ export default function BrainDumpInput({ onTasksQueued, onSwitchToForm }: Props)
         {loading ? (
           <>
             <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            AI is parsing…
+            Scheduling…
           </>
         ) : (
           <>
             <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
             </svg>
-            Parse Tasks with AI
+            Schedule My Tasks
           </>
         )}
       </button>
 
-      {/* Tips + form toggle */}
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-xs text-surface-500 leading-relaxed">
-          One task per line: deadlines (&ldquo;by Friday&rdquo;), duration (&ldquo;2 hours&rdquo;), priority (&ldquo;urgent&rdquo;).
+      {/* Bottom hint + form toggle */}
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs text-surface-400">
+          AI reads plain English — just write how you&apos;d text a friend.
         </p>
         <button
           type="button"
