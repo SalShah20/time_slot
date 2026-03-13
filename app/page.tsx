@@ -401,7 +401,7 @@ export default function Home() {
   const hasPendingTasks = tasks.some((t) => t.status === 'pending');
 
   // ── Upcoming task list (left panel) ─────────────────────────────────────────
-  const upcomingTasks = tasks
+  const activeTasks = tasks
     .filter((t) => {
       if (t.status !== 'pending' && t.status !== 'in_progress') return false;
       // Show non-child tasks (parents + unsplit tasks)
@@ -416,14 +416,61 @@ export default function Home() {
       return new Date(a.scheduled_start).getTime() - new Date(b.scheduled_start).getTime();
     });
 
+  const now = new Date();
+  const isOverdue = (t: TaskRow) =>
+    t.status === 'pending' && (
+      (t.scheduled_end && new Date(t.scheduled_end) < now) ||
+      (t.deadline && new Date(t.deadline) < now)
+    );
+
+  const overdueTasks  = activeTasks.filter(isOverdue);
+  const upcomingTasks = activeTasks.filter((t) => !isOverdue(t));
+
   const formatTime = (iso: string) =>
     new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 
-  // Filter upcoming tasks by search
+  const overdueBy = (task: TaskRow) => {
+    const ref = task.deadline && new Date(task.deadline) < now
+      ? new Date(task.deadline)
+      : new Date(task.scheduled_end!);
+    const diff = Date.now() - ref.getTime();
+    const h = Math.floor(diff / 3_600_000);
+    const m = Math.floor(diff / 60_000);
+    if (h >= 24) return `${Math.floor(h / 24)}d overdue`;
+    if (h >= 1)  return `${h}h overdue`;
+    return `${m}m overdue`;
+  };
+
+  const handleRescheduleTask = async (taskId: string) => {
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const res = await fetch('/api/tasks/reschedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timezone: tz, taskId }),
+      });
+      if (res.ok) {
+        showToast('Task rescheduled!');
+        await fetchTasks();
+        await fetchBlocks();
+      } else {
+        const d = await res.json().catch(() => ({})) as { error?: string };
+        showToast(d.error ?? 'Failed to reschedule');
+      }
+    } catch {
+      showToast('Failed to reschedule');
+    }
+  };
+
+  // Filter tasks by search
   const searchLower = taskSearch.toLowerCase();
+  const filteredOverdue = searchLower
+    ? overdueTasks.filter((t) => t.title.toLowerCase().includes(searchLower))
+    : overdueTasks;
   const filteredUpcoming = searchLower
     ? upcomingTasks.filter((t) => t.title.toLowerCase().includes(searchLower))
     : upcomingTasks;
+  const totalFiltered = filteredOverdue.length + filteredUpcoming.length;
 
   return (
     <div className="h-[100dvh] flex flex-col bg-surface-50 overflow-hidden">
@@ -571,7 +618,7 @@ export default function Home() {
       </header>
 
       {/* ── Stats ─────────────────────────────────────────────────────────── */}
-      <StatsCards onCompletedClick={() => setShowCompletedModal(true)} />
+      <StatsCards onCompletedClick={() => setShowCompletedModal(true)} overdueCount={overdueTasks.length} />
 
       {/* ── Mobile inline tab switcher ────────────────────────────────────── */}
       <div className="md:hidden flex-shrink-0 bg-white border-b border-surface-200">
@@ -628,9 +675,12 @@ export default function Home() {
           </div>
 
           <div className="px-5 py-2 border-b border-surface-100 flex-shrink-0">
-            <h2 className="text-sm font-bold text-surface-900">Upcoming Tasks</h2>
+            <h2 className="text-sm font-bold text-surface-900">Tasks</h2>
             <p className="text-xs text-surface-500 mt-0.5">
-              {filteredUpcoming.length} task{filteredUpcoming.length !== 1 ? 's' : ''}
+              {totalFiltered} task{totalFiltered !== 1 ? 's' : ''}
+              {filteredOverdue.length > 0 && (
+                <span className="text-red-500 ml-1">({filteredOverdue.length} overdue)</span>
+              )}
             </p>
           </div>
 
@@ -639,7 +689,7 @@ export default function Home() {
               <div className="flex items-center justify-center py-12 text-surface-400 text-sm">
                 Loading...
               </div>
-            ) : filteredUpcoming.length === 0 ? (
+            ) : totalFiltered === 0 ? (
               <div className="text-center py-12 px-4">
                 <div className="w-12 h-12 bg-teal-100 rounded-full flex items-center justify-center mx-auto mb-3">
                   <svg className="w-6 h-6 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -667,96 +717,162 @@ export default function Home() {
                 )}
               </div>
             ) : (
-              <div className="divide-y divide-surface-100">
-                {filteredUpcoming.map((task) => {
-                  const isDone = task.status === 'completed';
-                  const tagColor = task.tag ? getTagColor(task.tag) : null;
-
-                  return (
-                    <div
-                      key={task.id}
-                      className={`px-5 py-3.5 transition-opacity duration-500 ${isDone ? 'opacity-40' : ''}`}
-                    >
-                      <div className="flex items-start gap-2.5">
-                        <button
-                          onClick={() => void handleQuickComplete(task.id)}
-                          disabled={isDone || task.status === 'in_progress'}
-                          title={task.status === 'in_progress' ? 'Stop timer first' : 'Mark complete'}
-                          className={`flex-shrink-0 w-7 h-7 md:w-5 md:h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
-                            isDone
-                              ? 'border-green-400 bg-green-400'
-                              : task.status === 'in_progress'
-                              ? 'border-amber-300 cursor-not-allowed'
-                              : 'border-surface-300 hover:border-teal-500 hover:bg-teal-50'
-                          }`}
-                        >
-                          {isDone && (
-                            <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                            </svg>
-                          )}
-                        </button>
-
-                        <button
-                          type="button"
-                          className="flex-1 min-w-0 text-left"
-                          onClick={() => setEditingTask(task)}
-                          title="Click to edit task"
-                        >
-                          <p className={`text-sm font-medium line-clamp-2 ${isDone ? 'line-through text-surface-400' : 'text-surface-900'}`}>
-                            {task.title}
-                          </p>
-                          {task.is_fixed && (
-                            <span className="text-xs text-teal-600 flex items-center gap-1">
-                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
-                                <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
-                              </svg>
-                              Pinned
-                            </span>
-                          )}
-                          {(task.total_sessions ?? 1) > 1 && (
-                            <span className="text-xs text-teal-600">
-                              {task.total_sessions} sessions
-                            </span>
-                          )}
-                          {task.needs_rescheduling && (
-                            <p className="text-xs font-medium text-amber-600 mt-0.5">
-                              Can&apos;t fit before deadline
-                            </p>
-                          )}
-                          {task.scheduled_start && (
-                            <p className="text-xs text-surface-500 mt-0.5">
-                              {formatTime(task.scheduled_start)}
-                              {task.scheduled_end && ` – ${formatTime(task.scheduled_end)}`}
-                            </p>
-                          )}
-                          {tagColor && task.tag && (
-                            <span className={`text-xs px-1.5 py-0.5 rounded-full mt-0.5 inline-block ${tagColor.bg} ${tagColor.text}`}>
-                              {task.tag}
-                            </span>
-                          )}
-                          {task.reminder_minutes != null && task.reminder_minutes !== 15 && (
-                            <span className="text-xs text-surface-400 flex items-center gap-1 mt-0.5">
-                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                              </svg>
-                              {task.reminder_minutes === 0 ? 'No reminder' : `${task.reminder_minutes}min before`}
-                            </span>
-                          )}
-                        </button>
-
-                        <span className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-medium mt-0.5 ${
-                          task.status === 'in_progress'
-                            ? 'bg-amber-100 text-amber-700'
-                            : 'bg-surface-100 text-surface-600'
-                        }`}>
-                          {task.status === 'in_progress' ? 'Active' : 'Pending'}
-                        </span>
-                      </div>
+              <>
+                {/* ── Overdue section ──────────────────────────────────────── */}
+                {filteredOverdue.length > 0 && (
+                  <div>
+                    <div className="px-5 py-2.5 bg-red-50/60 border-b border-red-100 flex items-center gap-2">
+                      <svg className="w-4 h-4 text-red-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span className="text-red-600 font-semibold text-sm">Overdue</span>
+                      <span className="bg-red-100 text-red-600 text-xs font-medium px-2 py-0.5 rounded-full">
+                        {filteredOverdue.length}
+                      </span>
                     </div>
-                  );
-                })}
-              </div>
+                    <div className="divide-y divide-red-100">
+                      {filteredOverdue.map((task) => {
+                        const tagColor = task.tag ? getTagColor(task.tag) : null;
+                        return (
+                          <div
+                            key={task.id}
+                            className="px-5 py-3.5 border-l-4 border-red-400 hover:bg-red-50/40 transition-colors"
+                          >
+                            <div className="flex items-start gap-2.5">
+                              <button
+                                onClick={() => void handleQuickComplete(task.id)}
+                                title="Mark complete"
+                                className="flex-shrink-0 w-7 h-7 md:w-5 md:h-5 rounded-full border-2 border-surface-300 hover:border-teal-500 hover:bg-teal-50 flex items-center justify-center transition-colors"
+                              />
+                              <button
+                                type="button"
+                                className="flex-1 min-w-0 text-left"
+                                onClick={() => setEditingTask(task)}
+                                title="Click to edit task"
+                              >
+                                <p className="text-sm font-medium line-clamp-2 text-surface-900">
+                                  {task.title}
+                                </p>
+                                <span className="text-red-500 text-xs font-medium">
+                                  {overdueBy(task)}
+                                </span>
+                                {tagColor && task.tag && (
+                                  <span className={`text-xs px-1.5 py-0.5 rounded-full mt-0.5 ml-1.5 inline-block ${tagColor.bg} ${tagColor.text}`}>
+                                    {task.tag}
+                                  </span>
+                                )}
+                              </button>
+                              <button
+                                onClick={() => void handleRescheduleTask(task.id)}
+                                className="flex-shrink-0 text-xs text-surface-400 hover:text-teal-600 underline underline-offset-2 mt-0.5 transition-colors"
+                              >
+                                Reschedule
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Upcoming section ─────────────────────────────────────── */}
+                {filteredUpcoming.length > 0 && filteredOverdue.length > 0 && (
+                  <div className="px-5 py-2.5 bg-surface-50 border-b border-surface-100">
+                    <span className="text-surface-600 font-semibold text-sm">Upcoming</span>
+                  </div>
+                )}
+                <div className="divide-y divide-surface-100">
+                  {filteredUpcoming.map((task) => {
+                    const isDone = task.status === 'completed';
+                    const tagColor = task.tag ? getTagColor(task.tag) : null;
+
+                    return (
+                      <div
+                        key={task.id}
+                        className={`px-5 py-3.5 transition-opacity duration-500 ${isDone ? 'opacity-40' : ''}`}
+                      >
+                        <div className="flex items-start gap-2.5">
+                          <button
+                            onClick={() => void handleQuickComplete(task.id)}
+                            disabled={isDone || task.status === 'in_progress'}
+                            title={task.status === 'in_progress' ? 'Stop timer first' : 'Mark complete'}
+                            className={`flex-shrink-0 w-7 h-7 md:w-5 md:h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
+                              isDone
+                                ? 'border-green-400 bg-green-400'
+                                : task.status === 'in_progress'
+                                ? 'border-amber-300 cursor-not-allowed'
+                                : 'border-surface-300 hover:border-teal-500 hover:bg-teal-50'
+                            }`}
+                          >
+                            {isDone && (
+                              <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            className="flex-1 min-w-0 text-left"
+                            onClick={() => setEditingTask(task)}
+                            title="Click to edit task"
+                          >
+                            <p className={`text-sm font-medium line-clamp-2 ${isDone ? 'line-through text-surface-400' : 'text-surface-900'}`}>
+                              {task.title}
+                            </p>
+                            {task.is_fixed && (
+                              <span className="text-xs text-teal-600 flex items-center gap-1">
+                                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                                  <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+                                </svg>
+                                Pinned
+                              </span>
+                            )}
+                            {(task.total_sessions ?? 1) > 1 && (
+                              <span className="text-xs text-teal-600">
+                                {task.total_sessions} sessions
+                              </span>
+                            )}
+                            {task.needs_rescheduling && (
+                              <p className="text-xs font-medium text-amber-600 mt-0.5">
+                                Can&apos;t fit before deadline
+                              </p>
+                            )}
+                            {task.scheduled_start && (
+                              <p className="text-xs text-surface-500 mt-0.5">
+                                {formatTime(task.scheduled_start)}
+                                {task.scheduled_end && ` – ${formatTime(task.scheduled_end)}`}
+                              </p>
+                            )}
+                            {tagColor && task.tag && (
+                              <span className={`text-xs px-1.5 py-0.5 rounded-full mt-0.5 inline-block ${tagColor.bg} ${tagColor.text}`}>
+                                {task.tag}
+                              </span>
+                            )}
+                            {task.reminder_minutes != null && task.reminder_minutes !== 15 && (
+                              <span className="text-xs text-surface-400 flex items-center gap-1 mt-0.5">
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                                </svg>
+                                {task.reminder_minutes === 0 ? 'No reminder' : `${task.reminder_minutes}min before`}
+                              </span>
+                            )}
+                          </button>
+
+                          <span className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-medium mt-0.5 ${
+                            task.status === 'in_progress'
+                              ? 'bg-amber-100 text-amber-700'
+                              : 'bg-surface-100 text-surface-600'
+                          }`}>
+                            {task.status === 'in_progress' ? 'Active' : 'Pending'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
             )}
           </div>
         </aside>

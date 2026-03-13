@@ -19,9 +19,11 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   let timezone = 'UTC';
+  let singleTaskId: string | null = null;
   try {
-    const body = await req.json() as { timezone?: string };
+    const body = await req.json() as { timezone?: string; taskId?: string };
     timezone = body.timezone ?? 'UTC';
+    singleTaskId = body.taskId ?? null;
   } catch { /* no body — default to UTC */ }
 
   // Validate timezone early so a bad string doesn't cause a cryptic error deep in
@@ -40,6 +42,116 @@ export async function POST(req: NextRequest) {
     const wh = await fetchWorkHours(supabase, user.id);
 
     const now = new Date();
+
+    // ── Single-task reschedule fast path ───────────────────────────────────────
+    if (singleTaskId) {
+      const { data: task, error: fetchErr } = await supabase
+        .from('tasks')
+        .select('id, title, description, tag, priority, estimated_minutes, scheduled_start, scheduled_end, deadline, status, google_event_id, is_fixed')
+        .eq('id', singleTaskId)
+        .eq('user_id', user.id)
+        .single();
+
+      if (fetchErr || !task) {
+        return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+      }
+      if (task.is_fixed) {
+        return NextResponse.json({ error: 'Fixed tasks cannot be rescheduled' }, { status: 400 });
+      }
+
+      // Fetch busy intervals: other pending tasks + calendar events
+      const twoDaysOutSingle = new Date(now.getTime() + 2 * 24 * 60 * 60_000).toISOString();
+      const [{ data: otherTasks }, { data: calEvents }] = await Promise.all([
+        supabase
+          .from('tasks')
+          .select('scheduled_start, scheduled_end, estimated_minutes')
+          .eq('user_id', user.id)
+          .neq('id', singleTaskId)
+          .not('status', 'in', '("completed","cancelled")')
+          .gte('scheduled_start', now.toISOString())
+          .lt('scheduled_start', twoDaysOutSingle),
+        supabase
+          .from('calendar_events')
+          .select('start_time, end_time')
+          .eq('user_id', user.id)
+          .gte('start_time', now.toISOString())
+          .lt('start_time', twoDaysOutSingle),
+      ]);
+
+      const busyIntervals: BusyInterval[] = [
+        ...(otherTasks ?? [])
+          .filter((t) => t.scheduled_start)
+          .map((t) => ({
+            start: new Date(t.scheduled_start!),
+            end: t.scheduled_end
+              ? new Date(t.scheduled_end)
+              : new Date(new Date(t.scheduled_start!).getTime() + (t.estimated_minutes ?? 30) * 60_000),
+          })),
+        ...(calEvents ?? []).map((e) => ({
+          start: new Date(e.start_time),
+          end: new Date(e.end_time),
+        })),
+      ];
+
+      const { scheduled_start, scheduled_end } = fallbackSchedule(
+        busyIntervals,
+        task.estimated_minutes ?? 30,
+        task.deadline,
+        timezone,
+        wh,
+      );
+
+      // Replace GCal event
+      let newEventId: string | null = null;
+      const [calendar, calId] = await Promise.all([
+        getCalendarClient(supabase, user.id),
+        getTimeSlotCalendarId(supabase, user.id),
+      ]);
+      if (calendar) {
+        if (task.google_event_id) {
+          await deleteCalendarEvent(calendar, task.google_event_id, calId);
+        }
+        try {
+          const gcalEvent = await calendar.events.insert({
+            calendarId: calId,
+            requestBody: {
+              summary:     task.title,
+              description: task.description ?? '',
+              start:       { dateTime: scheduled_start },
+              end:         { dateTime: scheduled_end },
+              colorId:     getPriorityColorId(task.priority),
+            },
+          });
+          newEventId = gcalEvent.data.id ?? null;
+        } catch (err) {
+          console.warn(`[/api/tasks/reschedule] GCal recreation failed for ${task.id}:`, err);
+        }
+      }
+
+      const updatePayload: Record<string, unknown> = {
+        scheduled_start,
+        scheduled_end,
+        needs_rescheduling: false,
+      };
+      if (newEventId) updatePayload.google_event_id = newEventId;
+
+      const { data: updated, error: updateErr } = await supabase
+        .from('tasks')
+        .update(updatePayload)
+        .eq('id', task.id)
+        .eq('user_id', user.id)
+        .select('*')
+        .single();
+
+      if (updateErr) {
+        return NextResponse.json({ error: updateErr.message }, { status: 500 });
+      }
+
+      console.log(`[/api/tasks/reschedule] Single "${task.title}" → ${scheduled_start}`);
+      return NextResponse.json({ rescheduled: 1, task: updated });
+    }
+
+    // ── Batch reschedule (existing behavior) ──────────────────────────────────
     // Look back 7 days so past-due pending tasks (still unstarted) are also rescheduled.
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
     // Upper bound: start of the day-after-tomorrow in the user's timezone.

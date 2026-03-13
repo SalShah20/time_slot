@@ -36,9 +36,10 @@ function StatCard({
 
 interface Props {
   onCompletedClick?: () => void;
+  overdueCount?: number;
 }
 
-export default function StatsCards({ onCompletedClick }: Props) {
+export default function StatsCards({ onCompletedClick, overdueCount = 0 }: Props) {
   const [stats, setStats] = useState<TaskStats>({ total: 0, upcoming: 0, completed: 0 });
 
   const fetchStats = useCallback(async () => {
@@ -88,16 +89,23 @@ export default function StatsCards({ onCompletedClick }: Props) {
             </svg>
           }
         />
-        <StatCard
-          label="Upcoming"
-          value={stats.upcoming}
-          accent="bg-teal-50"
-          icon={
-            <svg className="w-4 h-4 md:w-5 md:h-5 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          }
-        />
+        <div className="relative flex-1 min-w-0">
+          <StatCard
+            label="Upcoming"
+            value={stats.upcoming}
+            accent="bg-teal-50"
+            icon={
+              <svg className="w-4 h-4 md:w-5 md:h-5 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            }
+          />
+          {overdueCount > 0 && (
+            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium shadow-sm">
+              {overdueCount}
+            </span>
+          )}
+        </div>
         <StatCard
           label="Completed"
           value={stats.completed}

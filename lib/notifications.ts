@@ -97,6 +97,7 @@ export function sendMorningSummary(tasks: TaskRow[], dateKey: string): void {
   const key = `morning_${dateKey}`;
   if (hasSent(key)) return;
 
+  const now = Date.now();
   const todayStart = new Date(dateKey).getTime();
   const todayEnd   = todayStart + 86_400_000;
 
@@ -108,10 +109,22 @@ export function sendMorningSummary(tasks: TaskRow[], dateKey: string): void {
     })
     .sort((a, b) => new Date(a.scheduled_start!).getTime() - new Date(b.scheduled_start!).getTime());
 
-  const body = todayTasks.length > 0
-    ? `${todayTasks.length} task${todayTasks.length !== 1 ? 's' : ''} scheduled today — first up: "${todayTasks[0].title}"`
-    : 'No tasks scheduled yet. Add one to get started!';
+  const overdueTasks = tasks.filter((t) =>
+    t.status === 'pending' && (
+      (t.scheduled_end && new Date(t.scheduled_end).getTime() < now) ||
+      (t.deadline && new Date(t.deadline).getTime() < now)
+    ),
+  );
 
-  fire("Good morning! Here's your day", body, 'morning-summary');
+  let body: string;
+  if (overdueTasks.length > 0) {
+    body = `You have ${todayTasks.length} task${todayTasks.length !== 1 ? 's' : ''} today and ${overdueTasks.length} overdue. Let's catch up.`;
+  } else if (todayTasks.length > 0) {
+    body = `${todayTasks.length} task${todayTasks.length !== 1 ? 's' : ''} scheduled today — first up: "${todayTasks[0].title}"`;
+  } else {
+    body = 'No tasks scheduled yet. Add one to get started!';
+  }
+
+  fire('Good morning!', body, 'morning-summary');
   markSent(key);
 }
