@@ -17,6 +17,8 @@ export interface TaskInput {
   isFixed?: boolean;
   /** ISO start time for fixed tasks (required when isFixed is true) */
   fixedStart?: string;
+  /** Custom reminder: undefined=default 15min, 0=none, N=N minutes before start */
+  reminderMinutes?: number;
 }
 
 interface Props {
@@ -47,6 +49,17 @@ const PRIORITY_OPTIONS = [
 ] as const;
 type Priority = 'low' | 'medium' | 'high';
 
+const REMINDER_OPTIONS = [
+  { label: 'Default (15 min)',  value: -1 },
+  { label: 'None',             value: 0 },
+  { label: '5 minutes before', value: 5 },
+  { label: '15 minutes before', value: 15 },
+  { label: '30 minutes before', value: 30 },
+  { label: '1 hour before',    value: 60 },
+  { label: '2 hours before',   value: 120 },
+  { label: '1 day before',     value: 1440 },
+];
+
 export default function TaskForm({ onTaskCreated, onTasksCreated, hideHeader = false, onQueue }: Props) {
   const [title, setTitle]               = useState('');
   const [description, setDescription]   = useState('');
@@ -59,6 +72,7 @@ export default function TaskForm({ onTaskCreated, onTasksCreated, hideHeader = f
   const [isFixed, setIsFixed]           = useState(false);
   const [fixedDate, setFixedDate]       = useState('');
   const [fixedTime, setFixedTime]       = useState('');
+  const [reminderValue, setReminderValue] = useState<number>(-1);
   const [loading, setLoading]           = useState(false);
   const [error, setError]               = useState<string | null>(null);
   const [success, setSuccess]           = useState(false);
@@ -90,6 +104,7 @@ export default function TaskForm({ onTaskCreated, onTasksCreated, hideHeader = f
     setIsFixed(false);
     setFixedDate('');
     setFixedTime('');
+    setReminderValue(-1);
     setError(null);
   }
 
@@ -120,6 +135,7 @@ export default function TaskForm({ onTaskCreated, onTasksCreated, hideHeader = f
         deadline:        buildDeadline(),
         isFixed:         isFixed || undefined,
         fixedStart,
+        reminderMinutes: reminderValue === -1 ? undefined : reminderValue,
       });
       resetForm();
       setSuccess(true);
@@ -142,6 +158,7 @@ export default function TaskForm({ onTaskCreated, onTasksCreated, hideHeader = f
           timezone:         Intl.DateTimeFormat().resolvedOptions().timeZone,
           isFixed:          isFixed || undefined,
           fixedStart,
+          reminderMinutes:  reminderValue === -1 ? undefined : reminderValue,
         }),
       });
 
@@ -396,6 +413,24 @@ export default function TaskForm({ onTaskCreated, onTasksCreated, hideHeader = f
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Reminder */}
+        <div>
+          <label className="block text-sm font-medium text-surface-700 mb-1">
+            Reminder
+          </label>
+          <select
+            value={reminderValue}
+            onChange={(e) => setReminderValue(Number(e.target.value))}
+            className="w-full px-3 py-2.5 border border-surface-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-surface-900 bg-white"
+          >
+            {REMINDER_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
         </div>
 
         {/* Error / Success */}

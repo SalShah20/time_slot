@@ -200,6 +200,7 @@ export async function POST(req: NextRequest) {
     timezone = 'UTC',
     isFixed = false,
     fixedStart,
+    reminderMinutes,
   } = await req.json() as {
     title: string;
     description?: string;
@@ -210,6 +211,7 @@ export async function POST(req: NextRequest) {
     timezone?: string;
     isFixed?: boolean;
     fixedStart?: string;
+    reminderMinutes?: number;
   };
 
   if (!title) {
@@ -302,6 +304,7 @@ export async function POST(req: NextRequest) {
     deadline:          deadline ?? null,
     scheduled_start:   finalScheduledStart,
     status:            'pending',
+    reminder_minutes:  reminderMinutes ?? null,
   };
   if (isFixed) baseInsert.is_fixed = true;
 
@@ -366,6 +369,11 @@ export async function POST(req: NextRequest) {
             allSessions.map(async (sess) => {
               const suffix = ` (${(sess as Record<string, unknown>).session_number}/${sessions.length})`;
               try {
+                const gcalReminders = reminderMinutes != null && reminderMinutes > 0
+                  ? { useDefault: false, overrides: [{ method: 'popup' as const, minutes: reminderMinutes }] }
+                  : reminderMinutes === 0
+                    ? { useDefault: false, overrides: [] }
+                    : undefined;
                 const gcalEvent = await calendar.events.insert({
                   calendarId:  calId,
                   requestBody: {
@@ -374,6 +382,7 @@ export async function POST(req: NextRequest) {
                     start:       { dateTime: sess.scheduled_start! },
                     end:         { dateTime: sess.scheduled_end! },
                     colorId:     getPriorityColorId(priority),
+                    ...(gcalReminders ? { reminders: gcalReminders } : {}),
                   },
                 });
                 const eventId = gcalEvent.data.id;
@@ -430,6 +439,11 @@ export async function POST(req: NextRequest) {
     const calendar = await getCalendarClient(supabase, user.id);
     if (calendar) {
       const calId = await getOrCreateTimeSlotCalendar(supabase, user.id, calendar);
+      const gcalReminders = reminderMinutes != null && reminderMinutes > 0
+        ? { useDefault: false, overrides: [{ method: 'popup' as const, minutes: reminderMinutes }] }
+        : reminderMinutes === 0
+          ? { useDefault: false, overrides: [] }
+          : undefined;
       const gcalEvent = await calendar.events.insert({
         calendarId: calId,
         requestBody: {
@@ -438,6 +452,7 @@ export async function POST(req: NextRequest) {
           start:       { dateTime: finalScheduledStart },
           end:         { dateTime: finalScheduledEnd },
           colorId:     getPriorityColorId(priority),
+          ...(gcalReminders ? { reminders: gcalReminders } : {}),
         },
       });
 

@@ -44,6 +44,7 @@ export interface TaskRow {
   status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
   is_fixed?: boolean;
   needs_rescheduling?: boolean;
+  reminder_minutes?: number | null;
   session_number?: number;
   total_sessions?: number;
   parent_task_id?: string | null;

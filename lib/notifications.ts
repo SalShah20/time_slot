@@ -27,21 +27,33 @@ export async function requestPermission(): Promise<boolean> {
 }
 
 /**
- * Fire a notification for any pending task whose scheduled_start is
- * 13–17 minutes away. Uses localStorage to ensure each task only fires once.
+ * Fire a notification for any pending task based on its reminder setting.
+ * Uses `reminder_minutes` if set (0 = no reminder), otherwise defaults to 15 min.
+ * Uses localStorage to ensure each task only fires once.
  * Call this every minute.
  */
 export function checkTaskStartingSoon(tasks: TaskRow[]): void {
   const now = Date.now();
   for (const task of tasks) {
     if (task.status !== 'pending' || !task.scheduled_start) continue;
+
+    // 0 means no reminder for this task
+    const reminderMin = task.reminder_minutes ?? 15;
+    if (reminderMin === 0) continue;
+
     const minutesUntil = (new Date(task.scheduled_start).getTime() - now) / 60_000;
-    if (minutesUntil >= 13 && minutesUntil < 17) {
+    // Fire within a 4-minute window centered around the reminder time
+    const windowLow  = reminderMin - 2;
+    const windowHigh = reminderMin + 2;
+    if (minutesUntil >= windowLow && minutesUntil < windowHigh) {
       const key = `soon_${task.id}`;
       if (!hasSent(key)) {
+        const label = reminderMin >= 60
+          ? `${Math.round(reminderMin / 60)} hour${reminderMin >= 120 ? 's' : ''}`
+          : `${reminderMin} minute${reminderMin !== 1 ? 's' : ''}`;
         fire(
           'Task starting soon',
-          `"${task.title}" starts in 15 minutes`,
+          `"${task.title}" starts in ${label}`,
           `soon-${task.id}`,
         );
         markSent(key);

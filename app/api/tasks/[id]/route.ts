@@ -23,6 +23,7 @@ export async function PATCH(
     timezone?: string;
     isFixed?: boolean;
     status?: string;
+    reminderMinutes?: number | null;
   };
 
   const supabase = createSupabaseServer();
@@ -53,6 +54,7 @@ export async function PATCH(
   if (body.estimatedMinutes !== undefined) update.estimated_minutes = body.estimatedMinutes;
   if (body.isFixed !== undefined)         update.is_fixed          = body.isFixed;
   if (body.status !== undefined)          update.status            = body.status;
+  if (body.reminderMinutes !== undefined) update.reminder_minutes  = body.reminderMinutes;
 
   const newMinutes = body.estimatedMinutes ?? (existing.estimated_minutes as number);
 
@@ -141,6 +143,12 @@ export async function PATCH(
         const finalStart    = (update.scheduled_start as string | undefined) ?? (existing.scheduled_start as string);
         const finalEnd      = (update.scheduled_end   as string | undefined) ?? (existing.scheduled_end   as string);
         const priorityValue = (update.priority as string | undefined) ?? (existing.priority as string | null);
+        const reminderMin = (update.reminder_minutes as number | null | undefined) ?? (existing.reminder_minutes as number | null);
+        const gcalReminders = reminderMin != null && reminderMin > 0
+          ? { useDefault: false, overrides: [{ method: 'popup' as const, minutes: reminderMin }] }
+          : reminderMin === 0
+            ? { useDefault: false, overrides: [] }
+            : undefined;
         await calendar.events.patch({
           calendarId: calId,
           eventId:    existing.google_event_id as string,
@@ -150,6 +158,7 @@ export async function PATCH(
             start:       { dateTime: finalStart },
             end:         { dateTime: finalEnd },
             colorId:     getPriorityColorId(priorityValue),
+            ...(gcalReminders ? { reminders: gcalReminders } : {}),
           },
         });
       } catch (err) {

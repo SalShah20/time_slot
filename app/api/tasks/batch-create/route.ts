@@ -19,6 +19,7 @@ interface TaskInput {
   deadline?: string;
   isFixed?: boolean;
   fixedStart?: string;
+  reminderMinutes?: number;
 }
 
 interface ScheduledTask extends TaskInput {
@@ -479,6 +480,7 @@ export async function POST(req: NextRequest) {
     session_number:    1,
     total_sessions:    r.sessions.length,
     is_fixed:          !!r.task.isFixed,
+    reminder_minutes:  r.task.reminderMinutes ?? null,
   }));
 
   const { data: insertedSession1, error: s1Error } = await supabase
@@ -511,6 +513,7 @@ export async function POST(req: NextRequest) {
         session_number:    k + 1,
         total_sessions:    r.sessions.length,
         parent_task_id:    parentId,
+        reminder_minutes:  r.task.reminderMinutes ?? null,
       });
     }
   }
@@ -570,6 +573,12 @@ export async function POST(req: NextRequest) {
           if (!taskRow) return;
           const suffix = totalSessions > 1 ? ` (${sessionNumber}/${totalSessions})` : '';
           try {
+            const rm = originalTask.reminderMinutes;
+            const gcalReminders = rm != null && rm > 0
+              ? { useDefault: false, overrides: [{ method: 'popup' as const, minutes: rm }] }
+              : rm === 0
+                ? { useDefault: false, overrides: [] }
+                : undefined;
             const gcalEvent = await calendar.events.insert({
               calendarId:  calId,
               requestBody: {
@@ -578,6 +587,7 @@ export async function POST(req: NextRequest) {
                 start:       { dateTime: taskRow.scheduled_start as string },
                 end:         { dateTime: taskRow.scheduled_end as string },
                 colorId:     getPriorityColorId(originalTask.priority),
+                ...(gcalReminders ? { reminders: gcalReminders } : {}),
               },
             });
             const eventId = gcalEvent.data.id;
