@@ -174,7 +174,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Integrations section */}
-        <div>
+        <div id="integrations">
           <h2 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3 px-1">
             Integrations
           </h2>

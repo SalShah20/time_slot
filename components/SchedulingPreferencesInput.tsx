@@ -22,6 +22,12 @@ function halfHourRange(from: number, to: number): number[] {
 
 const allHalfHours = halfHourRange(0, 23.5);
 
+interface DayOverride {
+  workStartHour?: number;
+  workEndHour?: number;
+  workEndLateHour?: number;
+}
+
 interface Prefs {
   schedulingContext: string | null;
   schedulingNotes: string | null;
@@ -31,6 +37,7 @@ interface Prefs {
   preferMornings: boolean;
   preferEvenings: boolean;
   avoidBackToBack: boolean;
+  workHoursByDay: Record<string, DayOverride> | null;
 }
 
 const selectClass =
@@ -51,6 +58,7 @@ export default function SchedulingPreferencesInput() {
   const [preferMornings, setPreferMornings]   = useState(false);
   const [preferEvenings, setPreferEvenings]   = useState(false);
   const [avoidBackToBack, setAvoidBackToBack] = useState(false);
+  const [workHoursByDay, setWorkHoursByDay]   = useState<Record<string, DayOverride> | null>(null);
   const [savedContext, setSavedContext]       = useState('');
 
   useEffect(() => {
@@ -73,6 +81,7 @@ export default function SchedulingPreferencesInput() {
         setPreferMornings(prefs.preferMornings ?? false);
         setPreferEvenings(prefs.preferEvenings ?? false);
         setAvoidBackToBack(prefs.avoidBackToBack ?? false);
+        if (prefs.workHoursByDay) setWorkHoursByDay(prefs.workHoursByDay);
       })
       .catch(() => null)
       .finally(() => setLoadingPrefs(false));
@@ -106,6 +115,9 @@ export default function SchedulingPreferencesInput() {
           if (typeof p.prefer_evenings === 'boolean') setPreferEvenings(p.prefer_evenings);
           if (typeof p.avoid_back_to_back === 'boolean') setAvoidBackToBack(p.avoid_back_to_back);
           if (typeof p.scheduling_notes === 'string') setSchedulingNotes(p.scheduling_notes);
+          if (p.work_hours_by_day !== undefined) {
+            setWorkHoursByDay((p.work_hours_by_day as Record<string, DayOverride> | null) ?? null);
+          }
         }
 
         setSavedContext(input.trim());
@@ -168,7 +180,7 @@ export default function SchedulingPreferencesInput() {
             void handleSave();
           }
         }}
-        placeholder={"I'm a night owl — don't schedule anything before 11am. I usually stop working around midnight but can stay up until 2am if needed. I prefer mornings for hard tasks and need breaks between sessions."}
+        placeholder={"I wake up around 8am on weekdays, but on weekends don't schedule anything before 11am. I prefer mornings for hard tasks and need breaks between sessions."}
         rows={3}
         className="w-full mt-4 px-3 py-2.5 border border-surface-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-surface-900 placeholder:text-surface-400 resize-none leading-relaxed"
         style={{ fontSize: '15px' }}
@@ -179,7 +191,7 @@ export default function SchedulingPreferencesInput() {
         <div className="mt-3 bg-teal-50 rounded-lg px-3 py-2 text-sm text-teal-800 flex flex-wrap items-center gap-1.5">
           <span className="font-medium">TimeSlot understood:</span>{' '}
           <span>{schedulingNotes}</span>
-          {(preferMornings || preferEvenings || avoidBackToBack) && (
+          {(preferMornings || preferEvenings || avoidBackToBack || workHoursByDay) && (
             <div className="flex flex-wrap gap-1.5 w-full mt-1.5">
               {preferMornings && (
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-teal-100 text-teal-700">
@@ -194,6 +206,11 @@ export default function SchedulingPreferencesInput() {
               {avoidBackToBack && (
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-teal-100 text-teal-700">
                   Breaks preferred
+                </span>
+              )}
+              {workHoursByDay && Object.keys(workHoursByDay).length > 0 && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-teal-100 text-teal-700">
+                  Per-day schedule
                 </span>
               )}
             </div>

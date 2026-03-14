@@ -9,7 +9,7 @@ export async function GET() {
   const supabase = createSupabaseServer();
   const { data } = await supabase
     .from('user_tokens')
-    .select('scheduling_context, scheduling_notes, work_start_hour, work_end_hour, work_end_late_hour, prefer_mornings, prefer_evenings, avoid_back_to_back')
+    .select('scheduling_context, scheduling_notes, work_start_hour, work_end_hour, work_end_late_hour, prefer_mornings, prefer_evenings, avoid_back_to_back, work_hours_by_day')
     .eq('user_id', user.id)
     .single();
 
@@ -26,6 +26,7 @@ export async function GET() {
     preferMornings:    (data as Record<string, unknown>).prefer_mornings ?? false,
     preferEvenings:    (data as Record<string, unknown>).prefer_evenings ?? false,
     avoidBackToBack:   (data as Record<string, unknown>).avoid_back_to_back ?? false,
+    workHoursByDay:    (data as Record<string, unknown>).work_hours_by_day ?? null,
   });
 }
 
@@ -53,7 +54,8 @@ Return ONLY a raw JSON object (no markdown) with these fields:
 - prefer_mornings (boolean): user prefers tasks scheduled in the morning.
 - prefer_evenings (boolean): user prefers tasks scheduled in the evening.
 - avoid_back_to_back (boolean): user wants buffer time between tasks.
-- scheduling_notes (string): 1–2 sentence plain English summary of what you parsed, to show back to the user.
+- scheduling_notes (string): 1–2 sentence plain English summary of what you parsed, to show back to the user. If per-day rules were detected, mention them.
+- work_hours_by_day (object or null): per-day overrides. Keys are "0"-"6" (0=Sunday, 6=Saturday). Each value is an object with optional fields: work_start_hour, work_end_hour, work_end_late_hour. Only include days that differ from the base hours. Set to null if no per-day rules are specified.
 
 Half-hour values are allowed: 8.5 = 8:30 AM, 22.5 = 10:30 PM, etc.
 
@@ -62,7 +64,12 @@ Examples:
 - "I usually stop working around 11:30pm and go to bed at 2am" → work_end_hour: 23.5, work_end_late_hour: 2
 - "I like getting hard tasks done in the morning" → prefer_mornings: true
 - "I need breaks between tasks, I can't do back to back stuff" → avoid_back_to_back: true
-- "I'm free all day but prefer evenings after 6" → prefer_evenings: true, work_start_hour: 8`;
+- "I'm free all day but prefer evenings after 6" → prefer_evenings: true, work_start_hour: 8
+- "On weekdays I wake up at 8am, but on weekends don't schedule before 11am" → work_start_hour: 8, work_hours_by_day: {"0": {"work_start_hour": 11}, "6": {"work_start_hour": 11}}
+- "Monday through Friday 9 to 5, weekends 11 to 3pm" → work_start_hour: 9, work_end_hour: 17, work_hours_by_day: {"0": {"work_start_hour": 11, "work_end_hour": 15}, "6": {"work_start_hour": 11, "work_end_hour": 15}}
+
+Day mapping: 0=Sunday, 1=Monday, 2=Tuesday, 3=Wednesday, 4=Thursday, 5=Friday, 6=Saturday.
+"weekdays" = days 1-5. "weekends" = days 0 and 6.`;
 
   let parsed: Record<string, unknown> = {};
   try {
@@ -122,6 +129,10 @@ Examples:
   }
   if (typeof parsed.avoid_back_to_back === 'boolean') {
     update.avoid_back_to_back = parsed.avoid_back_to_back;
+  }
+  // Per-day work hours overrides (null clears them)
+  if (parsed.work_hours_by_day !== undefined) {
+    update.work_hours_by_day = parsed.work_hours_by_day ?? null;
   }
 
   const { error } = await supabase

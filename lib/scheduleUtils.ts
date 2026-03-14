@@ -3,6 +3,13 @@ export interface BusyInterval {
   end: Date;
 }
 
+/** Per-day override for work hours (only overridden fields need to be present). */
+export interface DayWorkHours {
+  workStartHour?: number;
+  workEndHour?: number;
+  workEndLateHour?: number;
+}
+
 export interface WorkHours {
   workStartHour: number;   // default 8  (earliest start)
   workEndHour: number;     // default 23 (end of preferred window)
@@ -10,6 +17,8 @@ export interface WorkHours {
   preferMornings?: boolean;
   preferEvenings?: boolean;
   avoidBackToBack?: boolean;
+  /** Per-day overrides. Keys are "0"-"6" (0=Sunday, 6=Saturday). */
+  byDay?: Record<string, DayWorkHours>;
 }
 
 export const DEFAULT_WORK_HOURS: WorkHours = {
@@ -85,13 +94,44 @@ export function localTimeOnDay(date: Date, hour: number, minute: number, tz: str
 }
 
 /**
+ * Returns the local day-of-week (0=Sunday, 6=Saturday) for `date` in `tz`.
+ */
+export function localDayOfWeek(date: Date, tz: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, weekday: 'short',
+  }).formatToParts(date);
+  const wd = parts.find((p) => p.type === 'weekday')?.value ?? 'Mon';
+  const map: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return map[wd] ?? 1;
+}
+
+/**
+ * Resolves per-day work hours overrides for a specific date.
+ * Returns a WorkHours with the base values merged with any day-specific overrides.
+ */
+export function resolveWorkHoursForDate(wh: WorkHours, date: Date, tz: string): WorkHours {
+  if (!wh.byDay) return wh;
+  const day = localDayOfWeek(date, tz);
+  const override = wh.byDay[String(day)];
+  if (!override) return wh;
+  return {
+    ...wh,
+    workStartHour: override.workStartHour ?? wh.workStartHour,
+    workEndHour: override.workEndHour ?? wh.workEndHour,
+    workEndLateHour: override.workEndLateHour ?? wh.workEndLateHour,
+  };
+}
+
+/**
  * Advances `t` into the valid scheduling window in `tz`.
  * Hard blackout (lateHour – startHour) → snaps to startHour on the same local day.
+ * Resolves per-day work hours if available.
  */
 function snapToWorkHours(t: Date, tz: string, wh: WorkHours = DEFAULT_WORK_HOURS): Date {
+  const resolved = resolveWorkHoursForDate(wh, t, tz);
   const h = localHourIn(t, tz);
-  if (h >= wh.workEndLateHour && h < wh.workStartHour) {
-    const [sh, sm] = splitDecimalHour(wh.workStartHour);
+  if (h >= resolved.workEndLateHour && h < resolved.workStartHour) {
+    const [sh, sm] = splitDecimalHour(resolved.workStartHour);
     return localTimeOnDay(t, sh, sm, tz, 0);
   }
   return t;
@@ -133,7 +173,11 @@ export function fallbackSchedule(
   const fiveDaysFromNow = new Date(now.getTime() + DAYS_UNTIL_DEFER * 24 * 60 * 60_000);
   const useDeferredStart = deadline && new Date(deadline) > fiveDaysFromNow;
 
-  const [wsH, wsM] = splitDecimalHour(wh.workStartHour);
+  // Resolve per-day work hours for the initial candidate
+  const initWh = useDeferredStart
+    ? resolveWorkHoursForDate(wh, new Date(now.getTime() + 24 * 60 * 60_000), timezone)
+    : resolveWorkHoursForDate(wh, now, timezone);
+  const [wsH, wsM] = splitDecimalHour(initWh.workStartHour);
   let candidate: Date;
   if (useDeferredStart) {
     candidate = localTimeOnDay(now, wsH, wsM, timezone, 1);
@@ -152,14 +196,20 @@ export function fallbackSchedule(
     guard++;
     changed = false;
 
+    // Resolve work hours for the candidate's day (may differ on weekends)
+    const dayWh = resolveWorkHoursForDate(wh, candidate, timezone);
+
     const end      = new Date(candidate.getTime() + estimatedMinutes * 60_000);
     const endH     = localHourIn(end, timezone);
     const crossDay = localDateStrIn(end, timezone) !== localDateStrIn(candidate, timezone);
 
-    const endInBlackout     = endH >= wh.workEndLateHour && endH < wh.workStartHour;
-    const endCrossesIntoDay = crossDay && endH >= wh.workStartHour;
+    const endInBlackout     = endH >= dayWh.workEndLateHour && endH < dayWh.workStartHour;
+    const endCrossesIntoDay = crossDay && endH >= dayWh.workStartHour;
     if (endInBlackout || endCrossesIntoDay) {
-      candidate = localTimeOnDay(end, wsH, wsM, timezone, 0);
+      // Snap to the *next day's* work start hour (which may differ)
+      const nextDayWh = resolveWorkHoursForDate(wh, end, timezone);
+      const [nwsH, nwsM] = splitDecimalHour(nextDayWh.workStartHour);
+      candidate = localTimeOnDay(end, nwsH, nwsM, timezone, 0);
       changed   = true;
       continue;
     }
@@ -186,11 +236,12 @@ export function fallbackSchedule(
     }
 
     // Last resort: place task right before deadline.
+    const dlDayWh         = resolveWorkHoursForDate(wh, dl, timezone);
     const startBeforeDl   = new Date(dl.getTime() - estimatedMinutes * 60_000);
     const startH          = localHourIn(startBeforeDl, timezone);
     const dlH             = localHourIn(dl, timezone);
-    const startInBlackout = startH >= wh.workEndLateHour && startH < wh.workStartHour;
-    const endInBlackout2  = dlH   >= wh.workEndLateHour && dlH   < wh.workStartHour;
+    const startInBlackout = startH >= dlDayWh.workEndLateHour && startH < dlDayWh.workStartHour;
+    const endInBlackout2  = dlH   >= dlDayWh.workEndLateHour && dlH   < dlDayWh.workStartHour;
     const hasConflict     = sorted.some((iv) => iv.start < dl && iv.end > startBeforeDl);
     if (startBeforeDl > now && !startInBlackout && !endInBlackout2 && !hasConflict) {
       console.log(`[fallbackSchedule] ✅ (pre-deadline) ${startBeforeDl.toISOString()} (local ${startH.toFixed(1)}h)`);
@@ -266,8 +317,6 @@ export function findFreeBlocksInWindow(
 
   // For each gap, extract valid sub-blocks respecting the blackout
   const freeBlocks: FreeBlock[] = [];
-  const [startH, startM] = splitDecimalHour(wh.workStartHour);
-  const [lateH, lateM]   = splitDecimalHour(wh.workEndLateHour);
 
   for (const gap of gaps) {
     let subCursor = gap.start;
@@ -275,19 +324,23 @@ export function findFreeBlocksInWindow(
 
     while (subCursor < gap.end && guard < 200) {
       guard++;
+      // Resolve per-day work hours for the current sub-cursor
+      const dayWh = resolveWorkHoursForDate(wh, subCursor, timezone);
+      const [dayStartH, dayStartM] = splitDecimalHour(dayWh.workStartHour);
+      const [dayLateH, dayLateM]   = splitDecimalHour(dayWh.workEndLateHour);
       const h = localHourIn(subCursor, timezone);
 
       // Snap out of blackout
-      if (h >= wh.workEndLateHour && h < wh.workStartHour) {
-        subCursor = localTimeOnDay(subCursor, startH, startM, timezone, 0);
+      if (h >= dayWh.workEndLateHour && h < dayWh.workStartHour) {
+        subCursor = localTimeOnDay(subCursor, dayStartH, dayStartM, timezone, 0);
         continue;
       }
 
       // Determine end of current valid window (next late-hour boundary)
       const validWindowEnd: Date =
-        h < wh.workEndLateHour
-          ? localTimeOnDay(subCursor, lateH, lateM, timezone, 0)
-          : localTimeOnDay(subCursor, lateH, lateM, timezone, 1);
+        h < dayWh.workEndLateHour
+          ? localTimeOnDay(subCursor, dayLateH, dayLateM, timezone, 0)
+          : localTimeOnDay(subCursor, dayLateH, dayLateM, timezone, 1);
 
       const blockEnd = new Date(Math.min(validWindowEnd.getTime(), gap.end.getTime()));
       const durationMinutes = (blockEnd.getTime() - subCursor.getTime()) / 60_000;
@@ -296,8 +349,10 @@ export function findFreeBlocksInWindow(
         freeBlocks.push({ start: new Date(subCursor), end: new Date(blockEnd), durationMinutes });
       }
 
-      // Advance past the blackout to next workStartHour
-      subCursor = localTimeOnDay(validWindowEnd, startH, startM, timezone, 0);
+      // Advance past the blackout to next day's workStartHour
+      const nextDayWh = resolveWorkHoursForDate(wh, validWindowEnd, timezone);
+      const [ndsH, ndsM] = splitDecimalHour(nextDayWh.workStartHour);
+      subCursor = localTimeOnDay(validWindowEnd, ndsH, ndsM, timezone, 0);
     }
   }
 

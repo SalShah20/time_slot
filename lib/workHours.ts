@@ -6,7 +6,7 @@ import { DEFAULT_WORK_HOURS } from '@/lib/scheduleUtils';
 export async function fetchWorkHours(supabase: SupabaseClient, userId: string): Promise<WorkHours> {
   const { data } = await supabase
     .from('user_tokens')
-    .select('work_start_hour, work_end_hour, work_end_late_hour, prefer_mornings, prefer_evenings, avoid_back_to_back')
+    .select('work_start_hour, work_end_hour, work_end_late_hour, prefer_mornings, prefer_evenings, avoid_back_to_back, work_hours_by_day')
     .eq('user_id', userId)
     .single();
 
@@ -14,7 +14,7 @@ export async function fetchWorkHours(supabase: SupabaseClient, userId: string): 
 
   const row = data as Record<string, unknown>;
 
-  return {
+  const wh: WorkHours = {
     workStartHour:   (row.work_start_hour as number) ?? DEFAULT_WORK_HOURS.workStartHour,
     workEndHour:     (row.work_end_hour as number) ?? DEFAULT_WORK_HOURS.workEndHour,
     workEndLateHour: (row.work_end_late_hour as number) ?? DEFAULT_WORK_HOURS.workEndLateHour,
@@ -22,6 +22,12 @@ export async function fetchWorkHours(supabase: SupabaseClient, userId: string): 
     preferEvenings:  (row.prefer_evenings as boolean) ?? false,
     avoidBackToBack: (row.avoid_back_to_back as boolean) ?? false,
   };
+
+  if (row.work_hours_by_day && typeof row.work_hours_by_day === 'object') {
+    wh.byDay = row.work_hours_by_day as Record<string, { workStartHour?: number; workEndHour?: number; workEndLateHour?: number }>;
+  }
+
+  return wh;
 }
 
 /** Fetch the user's stored timezone, falling back to null. */
