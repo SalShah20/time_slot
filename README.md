@@ -2,7 +2,7 @@
 
 AI-powered task scheduling and time tracking app. Add tasks in plain English, and TimeSlot automatically schedules them into your calendar using an LLM — no manual time-blocking needed.
 
-Built with Next.js 14, TypeScript, Tailwind CSS, Supabase, and Google Calendar.
+Built with Next.js 14, TypeScript, Tailwind CSS, Supabase, Google Calendar, Google Classroom, and Canvas LMS.
 
 ## Features
 
@@ -37,7 +37,24 @@ Two-way sync with Google Calendar via OAuth 2.0:
 - **External events** are imported and shown as busy blocks in the schedule view
 - **Real-time webhook** — when someone adds an event to your Google Calendar, TimeSlot detects the conflict and automatically reschedules affected tasks
 - **Auto-resync** every 5 minutes with automatic conflict resolution
+- **Calendar filtering** — choose which calendars TimeSlot considers when scheduling (Settings)
 - All GCal operations are non-fatal — task features work even without Google Calendar connected
+
+### Google Classroom Integration
+Import assignments from Google Classroom as tasks:
+- **Read-only access** — TimeSlot reads your courses and coursework, never modifies Classroom data
+- **Incremental authorization** — Classroom scopes are only requested when you connect the integration from Settings
+- **Automatic deduplication** — previously imported assignments are tracked and skipped
+- **AI duration estimation** — imported assignments get estimated durations via GPT-4o-mini
+- Imports assignments due in the next 2 weeks
+
+### Canvas LMS Integration
+Import assignments from Canvas LMS as tasks:
+- **API token auth** — connect by providing your Canvas API token and institution domain
+- **Automatic deduplication** — previously imported assignments are tracked and skipped
+- **AI duration estimation** — imported assignments get estimated durations via GPT-4o-mini
+- Imports assignments due in the next 2 weeks
+- Disconnect at any time from Settings (deletes stored token)
 
 ### Focus Timer
 Start a timer against any pending task. The timer state machine supports work sessions, pauses, and breaks. Timer state is stored in localStorage (authoritative) with 30-second background sync to the database. Stale breaks are auto-ended after 2 hours.
@@ -55,6 +72,12 @@ Customize your scheduling window from the Settings page:
 - **Hard blackout** (default 3 AM – 8 AM — never scheduled)
 
 All scheduling — LLM prompts, fallback algorithm, and conflict rescheduling — respects your configured hours.
+
+### Natural Language Scheduling Preferences
+Describe your schedule in plain English ("I'm a night owl — don't schedule anything before 11am"), and TimeSlot parses it into working hours and preferences. Supports:
+- **Working hours extraction** — start, end, and late-night cutoff
+- **Preference flags** — prefers mornings, prefers evenings, avoid back-to-back tasks
+- Manual time selectors for fine-tuning after AI parsing
 
 ### Smart Conflict Resolution
 When a new Google Calendar event conflicts with a scheduled task, TimeSlot automatically:
@@ -99,6 +122,8 @@ Privacy Policy and Terms of Service pages (public, no auth required) for Google 
 - **Auth**: Supabase Auth with Google OAuth
 - **Database**: Supabase (PostgreSQL)
 - **Calendar**: Google Calendar API (googleapis)
+- **Classroom**: Google Classroom API (googleapis)
+- **Canvas**: Canvas LMS REST API
 - **AI**: OpenAI GPT-4o-mini (scheduling, parsing, duration estimation, tag suggestion)
 - **PWA**: @ducanh2912/next-pwa
 
@@ -107,7 +132,7 @@ Privacy Policy and Terms of Service pages (public, no auth required) for Google 
 ### Prerequisites
 - Node.js 18+
 - A Supabase project
-- A Google Cloud project with Calendar API enabled
+- A Google Cloud project with Calendar API enabled (and optionally Classroom API)
 - An OpenAI API key (optional — falls back to deterministic scheduling)
 
 ### Environment Variables
@@ -125,7 +150,7 @@ OPENAI_API_KEY=
 
 ### Database Setup
 
-Run the SQL migrations in order (001–013) in the Supabase SQL editor:
+Run the SQL migrations in order (001–018) in the Supabase SQL editor:
 
 1. `001_initial.sql` — base schema (tasks, active_timers, timer_sessions)
 2. `002_add_scheduled_time.sql` — adds scheduled_start to tasks
@@ -140,6 +165,11 @@ Run the SQL migrations in order (001–013) in the Supabase SQL editor:
 11. `011_add_is_fixed.sql` — adds is_fixed to tasks
 12. `012_working_hours.sql` — adds work_start_hour, work_end_hour, work_end_late_hour to user_tokens
 13. `013_work_hours_real.sql` — changes work hour columns to REAL for 30-min granularity; adds work_timezone
+14. `014_calendar_filter.sql` — calendar filter preferences
+15. `015_task_reminders.sql` — per-task reminders
+16. `016_canvas_integration.sql` — Canvas LMS integration (canvas_token, canvas_domain, imported assignments tracking)
+17. `017_scheduling_preferences.sql` — natural language scheduling preferences columns
+18. `018_classroom_integration.sql` — Google Classroom integration (classroom_connected, imported assignments tracking)
 
 ### Auth Setup
 
@@ -164,4 +194,4 @@ See `CLAUDE.md` for a detailed breakdown of every component, API route, database
 
 ## Deployment
 
-Deploy to Vercel and add all `.env.local` variables to the Vercel project settings. The PWA service worker is generated automatically on build. Replace `public/icon.svg` with real PNG icons (`public/icon-192.png`, `public/icon-512.png`) before publishing.
+Deploy to Vercel and add all `.env.local` variables to the Vercel project settings. The PWA service worker is generated automatically on build. PWA icons are pre-generated in `public/icons/` (72–512px PNGs).

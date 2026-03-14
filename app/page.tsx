@@ -29,8 +29,8 @@ export default function LandingPage() {
           </h1>
           <p className="mt-5 text-lg md:text-xl text-surface-500 leading-relaxed max-w-xl mx-auto">
             Brain dump your tasks in plain English. TimeSlot uses AI to schedule
-            them into your Google Calendar automatically&mdash;no drag and drop,
-            no manual planning.
+            them into your Google Calendar automatically. Import assignments from
+            Google Classroom and Canvas&mdash;no drag and drop, no manual planning.
           </p>
           <Link
             href="/login"
@@ -52,7 +52,7 @@ export default function LandingPage() {
               {
                 icon: '\uD83E\uDDE0',
                 title: 'Brain dump your tasks',
-                desc: 'Type anything naturally\u2014deadlines, duration, priority. A paragraph, a list, whatever works for you.',
+                desc: 'Type anything naturally: deadlines, duration, priority. A paragraph, a list, whatever works for you.',
               },
               {
                 icon: '\u2728',

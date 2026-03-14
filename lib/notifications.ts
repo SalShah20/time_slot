@@ -15,7 +15,7 @@ function markSent(key: string): void {
 function fire(title: string, body: string, tag: string): void {
   if (typeof window === 'undefined') return;
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  new Notification(title, { body, tag, icon: '/favicon.ico' });
+  new Notification(title, { body, tag, icon: '/public/icon.svg' });
 }
 
 export async function requestPermission(): Promise<boolean> {

@@ -7,7 +7,7 @@ export default function PrivacyPolicy() {
         </a>
 
         <h1 className="text-3xl font-bold text-surface-900 mb-2">Privacy Policy</h1>
-        <p className="text-surface-500 mb-8">Last updated: March 10, 2026</p>
+        <p className="text-surface-500 mb-8">Last updated: March 13, 2026</p>
 
         <div className="space-y-8 text-surface-700 leading-relaxed">
           <section>
@@ -47,18 +47,41 @@ export default function PrivacyPolicy() {
               end times, and busy/free status. We also create, update, and delete calendar events on
               your behalf when you create, reschedule, or complete tasks.
             </p>
-            <p className="mt-2">
+
+            <h3 className="font-semibold text-surface-800 mt-4 mb-2">Google Classroom Data</h3>
+            <p>
+              If you choose to connect Google Classroom, we access your course list and coursework
+              (assignments) to automatically import upcoming assignments as tasks. We store a record
+              of which assignments have been imported to prevent duplicates. We do not modify any data
+              in your Google Classroom account — access is read-only.
+            </p>
+
+            <h3 className="font-semibold text-surface-800 mt-4 mb-2">Canvas LMS Data</h3>
+            <p>
+              If you choose to connect Canvas LMS, we use your Canvas API token to fetch upcoming
+              assignments from your courses. We store a record of which assignments have been imported
+              to prevent duplicates. Your Canvas API token is stored securely in our database and is
+              only used to authenticate requests to your institution&apos;s Canvas instance.
+            </p>
+
+            <p className="mt-4">
               We request the following Google API scopes:
             </p>
             <ul className="list-disc ml-6 mt-2 space-y-1">
               <li><code className="text-sm bg-surface-100 px-1 rounded">auth/calendar</code> — to read, create, update, and delete calendar events for task scheduling and conflict detection</li>
+              <li><code className="text-sm bg-surface-100 px-1 rounded">auth/classroom.courses.readonly</code> — to list your Google Classroom courses (read-only, optional)</li>
+              <li><code className="text-sm bg-surface-100 px-1 rounded">auth/classroom.coursework.me.readonly</code> — to read your assignments and due dates (read-only, optional)</li>
             </ul>
+            <p className="mt-2 text-sm">
+              Google Classroom scopes are only requested when you explicitly choose to connect the
+              Classroom integration from Settings. They are not required for core functionality.
+            </p>
 
             <h3 className="font-semibold text-surface-800 mt-4 mb-2">Google OAuth Tokens</h3>
             <p>
               We securely store your Google OAuth access and refresh tokens to maintain your Google
-              Calendar connection. These tokens are stored in our database and are only used to
-              authenticate API requests to Google Calendar on your behalf.
+              Calendar and (optionally) Google Classroom connections. These tokens are stored in our
+              database and are only used to authenticate API requests to Google services on your behalf.
             </p>
           </section>
 
@@ -71,6 +94,7 @@ export default function PrivacyPolicy() {
               <li>To detect and resolve scheduling conflicts</li>
               <li>To provide productivity statistics and task completion tracking</li>
               <li>To estimate task durations using AI (task titles and descriptions may be sent to OpenAI&apos;s API for duration estimation)</li>
+              <li>To import assignments from Google Classroom and Canvas LMS as tasks (when connected)</li>
             </ul>
           </section>
 
@@ -134,11 +158,11 @@ export default function PrivacyPolicy() {
             </p>
             <p className="mt-2">Specifically:</p>
             <ul className="list-disc ml-6 mt-2 space-y-2">
-              <li>We only use Google Calendar data to provide and improve task scheduling features</li>
-              <li>We do not sell your Google Calendar data to third parties</li>
-              <li>We do not use your Google Calendar data for advertising purposes</li>
-              <li>We do not allow humans to read your Google Calendar data unless required for security purposes, to comply with applicable law, or with your explicit consent</li>
-              <li>Our use of Google Calendar data is limited to providing the functionality described in this policy</li>
+              <li>We only use Google Calendar and Google Classroom data to provide and improve task scheduling features</li>
+              <li>We do not sell your Google data to third parties</li>
+              <li>We do not use your Google data for advertising purposes</li>
+              <li>We do not allow humans to read your Google data unless required for security purposes, to comply with applicable law, or with your explicit consent</li>
+              <li>Our use of Google data is limited to providing the functionality described in this policy</li>
             </ul>
           </section>
 

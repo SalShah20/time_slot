@@ -55,6 +55,6 @@ export const config = {
      * - favicon.ico, icons, manifest, service worker
      * - Root path / (public landing page)
      */
-    '/((?!_next/static|_next/image|favicon.ico|icon.*|manifest|sw.js|workbox.*|$).*)',
+    '/((?!_next/static|_next/image|icon.svg|icon.*|manifest|sw.js|workbox.*|$).*)',
   ],
 };

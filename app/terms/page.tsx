@@ -7,7 +7,7 @@ export default function TermsOfService() {
         </a>
 
         <h1 className="text-3xl font-bold text-surface-900 mb-2">Terms of Service</h1>
-        <p className="text-surface-500 mb-8">Last updated: March 10, 2026</p>
+        <p className="text-surface-500 mb-8">Last updated: March 13, 2026</p>
 
         <div className="space-y-8 text-surface-700 leading-relaxed">
           <section>
@@ -24,8 +24,9 @@ export default function TermsOfService() {
             <p>
               TimeSlot is a task scheduling and productivity application that helps users organize
               their tasks, schedule them into their calendar, and track time spent on tasks. The app
-              integrates with Google Calendar to provide scheduling features and uses AI to assist
-              with task scheduling and duration estimation.
+              integrates with Google Calendar to provide scheduling features, with Google Classroom
+              and Canvas LMS to import assignments, and uses AI to assist with task scheduling and
+              duration estimation.
             </p>
           </section>
 
@@ -59,7 +60,30 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-surface-900 mb-3">5. AI-Powered Features</h2>
+            <h2 className="text-xl font-semibold text-surface-900 mb-3">5. Google Classroom Integration</h2>
+            <p>
+              TimeSlot offers optional integration with Google Classroom. By connecting Google
+              Classroom, you authorize TimeSlot to read your courses and assignments (read-only).
+              TimeSlot uses this data to automatically import upcoming assignments as tasks.
+              TimeSlot does not modify any data in your Google Classroom account. Classroom
+              permissions are requested separately from Calendar and are not required for core
+              functionality.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-semibold text-surface-900 mb-3">6. Canvas LMS Integration</h2>
+            <p>
+              TimeSlot offers optional integration with Canvas LMS. By providing your Canvas API
+              token, you authorize TimeSlot to read your courses and assignments from your
+              institution&apos;s Canvas instance. TimeSlot uses this data to automatically import
+              upcoming assignments as tasks. You can disconnect Canvas at any time from Settings,
+              which deletes your stored API token.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-semibold text-surface-900 mb-3">7. AI-Powered Features</h2>
             <p>
               TimeSlot uses AI (powered by OpenAI) to assist with task scheduling and duration
               estimation. AI-generated suggestions are provided as recommendations and may not always
@@ -68,7 +92,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-surface-900 mb-3">6. Acceptable Use</h2>
+            <h2 className="text-xl font-semibold text-surface-900 mb-3">8. Acceptable Use</h2>
             <p>You agree not to:</p>
             <ul className="list-disc ml-6 mt-2 space-y-2">
               <li>Use the service for any unlawful purpose</li>
@@ -80,7 +104,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-surface-900 mb-3">7. Intellectual Property</h2>
+            <h2 className="text-xl font-semibold text-surface-900 mb-3">9. Intellectual Property</h2>
             <p>
               The TimeSlot application, including its design, code, and branding, is owned by us. You
               retain ownership of the content you create (task titles, descriptions, etc.). By using
@@ -90,7 +114,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-surface-900 mb-3">8. Disclaimer of Warranties</h2>
+            <h2 className="text-xl font-semibold text-surface-900 mb-3">10. Disclaimer of Warranties</h2>
             <p>
               TimeSlot is provided &quot;as is&quot; and &quot;as available&quot; without warranties of
               any kind, either express or implied. We do not guarantee that the service will be
@@ -100,7 +124,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-surface-900 mb-3">9. Limitation of Liability</h2>
+            <h2 className="text-xl font-semibold text-surface-900 mb-3">11. Limitation of Liability</h2>
             <p>
               To the maximum extent permitted by law, we shall not be liable for any indirect,
               incidental, special, consequential, or punitive damages, or any loss of profits or
@@ -111,7 +135,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-surface-900 mb-3">10. Service Modifications</h2>
+            <h2 className="text-xl font-semibold text-surface-900 mb-3">12. Service Modifications</h2>
             <p>
               We reserve the right to modify, suspend, or discontinue the service at any time, with
               or without notice. We will make reasonable efforts to notify users of significant
@@ -120,7 +144,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-surface-900 mb-3">11. Termination</h2>
+            <h2 className="text-xl font-semibold text-surface-900 mb-3">13. Termination</h2>
             <p>
               We may terminate or suspend your access to the service at any time for violation of
               these terms. You may stop using the service at any time. Upon termination, your right
@@ -129,7 +153,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-surface-900 mb-3">12. Changes to Terms</h2>
+            <h2 className="text-xl font-semibold text-surface-900 mb-3">14. Changes to Terms</h2>
             <p>
               We may update these Terms of Service from time to time. Continued use of the service
               after changes constitutes acceptance of the updated terms. We will update the
@@ -138,7 +162,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-surface-900 mb-3">13. Contact</h2>
+            <h2 className="text-xl font-semibold text-surface-900 mb-3">15. Contact</h2>
             <p>
               If you have questions about these Terms of Service, please contact us through{" "}
               <a href="https://salonishah.net" className="text-teal-600 hover:underline" target="_blank" rel="noopener noreferrer">

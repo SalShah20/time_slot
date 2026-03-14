@@ -27,19 +27,20 @@ OPENAI_API_KEY=                    # for LLM-powered scheduling (GPT-4o-mini)
 
 ## Authentication
 
-Supabase Auth with Google OAuth. `middleware.ts` protects all routes — unauthenticated users are redirected to `/login`. Public (unauthenticated) routes: `/login`, `/signup`, `/auth/callback`, `/privacy`, `/terms`. The auth flow is:
-1. `/login` — Google sign-in button (footer links to Privacy Policy + Terms of Service)
-2. `/auth/callback` — Supabase OAuth code exchange, then redirect to `/`
+Supabase Auth with Google OAuth. `middleware.ts` protects all routes — unauthenticated users are redirected to `/login`. Public (unauthenticated) routes: `/`, `/login`, `/signup`, `/auth/callback`, `/privacy`, `/terms`. The auth flow is:
+1. `/` — public landing page (no auth)
+2. `/login` — Google sign-in button (footer links to Privacy Policy + Terms of Service)
+3. `/auth/callback` — Supabase OAuth code exchange, then redirect to `/dashboard`
 
 Server-side: use `getAuthUser()` from `lib/supabase-server.ts` in API routes. It returns the authenticated user or `null`. All DB queries are scoped to `user.id`.
 
-Client-side: `supabase.auth.getSession()` + `onAuthStateChange` in `app/page.tsx`.
+Client-side: `supabase.auth.getSession()` + `onAuthStateChange` in `app/dashboard/page.tsx`.
 
 ## Architecture
 
 **TimeSlot** is a task scheduling + timer app. Users add tasks, which are auto-scheduled into their calendar using an LLM. They can then start a timer against any pending task.
 
-### Page layout (`app/page.tsx`)
+### Page layout (`app/dashboard/page.tsx`)
 
 Full-screen layout:
 1. **Header** — logo, Google Calendar status button (connect/sync/reconnect), beta "Feedback Form" link (amber, opens Google Form in new tab), "Start Timer" button, user avatar/menu (dropdown includes Privacy + Terms links)
@@ -55,7 +56,7 @@ Floating overlays:
 - `TaskEditModal` — edit title/deadline/duration/tag of an existing pending task; clicking any task in the sidebar opens it; saving calls `PATCH /api/tasks/[id]` and re-fetches tasks
 - `OnboardingTooltip` — first-visit tooltip (localStorage key `ts_onboarding_seen`; shown after 1.5s)
 
-### State management in `app/page.tsx`
+### State management in `app/dashboard/page.tsx`
 
 #### `fetchBlocks` — stable identity + AbortController
 `fetchBlocks` has an **empty `useCallback` dependency array** and reads the current date from a `selectedDateRef` ref (kept in sync via `useEffect`). This makes `fetchBlocks` identity-stable, which in turn stabilises `syncCalendar`, `handleManualSync`, and the 5-minute sync interval (they no longer restart on every date change).
@@ -135,9 +136,10 @@ OAuth 2.0 via `googleapis`. Credentials in `google-calendar-mcp/gcp-oauth.keys.j
 - Requires `SUPABASE_SERVICE_ROLE_KEY` env var; uses `createSupabaseAdmin()` from `lib/supabase-server.ts`
 
 **Setup checklist:**
-1. Run all migrations through `013` in the Supabase SQL editor
+1. Run all migrations through `018` in the Supabase SQL editor
 2. Add `http://localhost:3000/api/calendar/callback` as an authorized redirect URI in GCP Console
 3. Add `http://localhost:3000/auth/callback` to Supabase Auth → URL Configuration → Redirect URLs
+4. Enable Google Classroom API in GCP Console (optional — only needed for Classroom integration)
 
 ### Calendar blocks (`app/api/blocks/`, `components/ScheduleView.tsx`)
 
@@ -166,7 +168,7 @@ Key invariant: **localStorage is authoritative**. All mutations write to localSt
 - `POST /api/timer/sync` — keeps DB in sync with localStorage state
 - `POST /api/timer/complete` — marks task completed, deletes `active_timers` row, bulk-inserts `timer_sessions`, deletes GCal event
 
-### Browser Notifications (`lib/notifications.ts`, `app/page.tsx`)
+### Browser Notifications (`lib/notifications.ts`, `app/dashboard/page.tsx`)
 
 Three notification types, all using localStorage keys to prevent duplicates:
 - **15-minute warning**: `checkTaskStartingSoon(tasks)` — fires when a pending task's `scheduled_start` is 13–17 min away. Called every minute via `setInterval`.
@@ -233,6 +235,47 @@ All values are stored as `REAL` (migration `013`) to support half-hour granulari
 
 `splitDecimalHour(h)` in `scheduleUtils.ts` converts decimal hours (e.g., 8.5) to `[hour, minute]` pairs (e.g., `[8, 30]`) for use with `localTimeOnDay`.
 
+### Natural language scheduling preferences (`components/SchedulingPreferencesInput.tsx`, `app/api/user/scheduling-preferences/`)
+
+Users can describe their schedule in plain English (e.g., "I'm a night owl — don't schedule before 11am"). GPT-4o-mini parses this into structured preferences:
+- Working hours (start, end, late-night cutoff)
+- Preference flags: `preferMornings`, `preferEvenings`, `avoidBackToBack`
+- Scheduling notes (human-readable summary)
+
+The `SchedulingPreferencesInput` component is a unified card in `/settings` that combines the NL textarea with manual time selectors. Single save button handles both NL parsing and manual overrides.
+
+Preference flags are stored in `user_tokens` (migration `017`) and loaded via `fetchWorkHours()`. They influence:
+- `fallbackSchedule()` padding: 25 min when `avoidBackToBack`, 10 min otherwise
+- LLM prompt hints in create/batch-create routes
+
+### Canvas LMS integration (`app/api/integrations/canvas/`, `components/CanvasSettings.tsx`)
+
+Optional integration — users provide a Canvas API token and institution domain:
+- `POST /api/integrations/canvas/credentials` — stores token + domain in `user_tokens`
+- `DELETE /api/integrations/canvas/credentials` — removes stored credentials
+- `POST /api/integrations/canvas/sync` — fetches upcoming assignments, deduplicates, creates tasks with AI duration estimates
+- Imported assignments tracked in `canvas_imported_assignments` table (migration `016`)
+- `CanvasSettings` component in Settings > Integrations with connect form, sync, disconnect
+
+### Google Classroom integration (`lib/googleClassroom.ts`, `app/api/integrations/classroom/`, `components/GoogleClassroomCard.tsx`)
+
+Optional integration using the same Google OAuth token as Calendar:
+- **Incremental authorization**: Classroom scopes (`classroom.courses.readonly`, `classroom.coursework.me.readonly`) are only requested when users click "Authorize" in the Classroom card — not during initial sign-up
+- `GET /api/integrations/classroom/status` — checks if Classroom scope is authorized by testing a Classroom API call
+- `POST /api/integrations/classroom/sync` — fetches assignments from active courses, deduplicates, creates tasks with AI duration estimates
+- `lib/googleClassroom.ts` — `fetchUpcomingClassroomAssignments(accessToken)` fetches courses + coursework, filters to next 14 days
+- Imported assignments tracked in `classroom_imported_assignments` table (migration `018`)
+- `GoogleClassroomCard` component in Settings > Integrations with authorize/sync UI
+
+### Calendar filtering (`app/api/calendar/filter/`, `app/settings/page.tsx`)
+
+Users can choose which Google Calendars TimeSlot considers when scheduling:
+- `GET /api/calendar/filter` — returns list of calendars with inclusion status
+- `POST /api/calendar/filter` — toggles a calendar's inclusion (primary calendar always included)
+- Excluded calendars' events are ignored during scheduling
+- Stored in `calendar_filter_preferences` table (migration `014`)
+- UI: toggle switches in Settings > Calendar Filtering card
+
 ### Timing history (`lib/timingHistory.ts`)
 
 The system learns from past task durations to improve future estimates:
@@ -254,16 +297,19 @@ Bulk insert up to 90 manual calendar blocks in a single request: `POST /api/bloc
 
 ### Database schema
 
-Six tables in Supabase (migrations in `supabase/migrations/`, run manually in order):
+Tables in Supabase (migrations in `supabase/migrations/`, run manually in order):
 
 | Table | Key columns |
 |-------|-------------|
 | `tasks` | `id, user_id, title, description, tag, priority, estimated_minutes, actual_duration, deadline, scheduled_start, scheduled_end, status, google_event_id, is_fixed, session_number, total_sessions, parent_task_id, needs_rescheduling` |
 | `active_timers` | `user_id (UNIQUE), task_id, state, started_at, paused_at, current_break_started_at, total_break_seconds` |
 | `timer_sessions` | `task_id, user_id, type (work/break), started_at, ended_at, duration` |
-| `user_tokens` | `user_id, google_access_token, google_refresh_token, google_token_expiry, google_calendar_id, webhook_channel_id, webhook_resource_id, webhook_expires_at, work_start_hour (REAL), work_end_hour (REAL), work_end_late_hour (REAL), work_timezone` |
+| `user_tokens` | `user_id, google_access_token, google_refresh_token, google_token_expiry, google_calendar_id, webhook_*, work_start_hour (REAL), work_end_hour (REAL), work_end_late_hour (REAL), work_timezone, prefer_mornings, prefer_evenings, avoid_back_to_back, scheduling_context, scheduling_notes, canvas_token, canvas_domain, canvas_last_synced, classroom_connected, classroom_last_synced` |
 | `calendar_events` | `user_id, google_event_id, title, start_time, end_time, is_busy` — read-only GCal cache |
 | `calendar_blocks` | `user_id, title, start_time, end_time, is_busy` — user-created manual blocks |
+| `calendar_filter_preferences` | `user_id, calendar_id, calendar_name, is_included` — per-calendar inclusion toggle |
+| `canvas_imported_assignments` | `user_id, canvas_assignment_id, task_id` — deduplication for Canvas sync |
+| `classroom_imported_assignments` | `user_id, classroom_assignment_id, task_id` — deduplication for Classroom sync |
 
 **Migration order** (run in Supabase SQL editor, not CLI):
 1. `001_initial.sql` — base schema
@@ -279,6 +325,11 @@ Six tables in Supabase (migrations in `supabase/migrations/`, run manually in or
 11. `011_add_is_fixed.sql` — adds `is_fixed BOOLEAN DEFAULT false` to `tasks`
 12. `012_working_hours.sql` — adds `work_start_hour, work_end_hour, work_end_late_hour` (INTEGER) to `user_tokens`
 13. `013_work_hours_real.sql` — changes work hour columns to `REAL` for 30-min granularity; adds `work_timezone TEXT`
+14. `014_calendar_filter.sql` — `calendar_filter_preferences` table + RLS
+15. `015_task_reminders.sql` — per-task reminders
+16. `016_canvas_integration.sql` — Canvas LMS columns on `user_tokens` + `canvas_imported_assignments` table
+17. `017_scheduling_preferences.sql` — NL scheduling preferences columns on `user_tokens`
+18. `018_classroom_integration.sql` — Google Classroom columns on `user_tokens` + `classroom_imported_assignments` table
 
 ### Tag / color system
 
@@ -296,13 +347,14 @@ Use `teal-600` / `hover:teal-700` for primary buttons. Use `surface-*` for all n
 
 | File | Purpose |
 |------|---------|
-| `app/page.tsx` | Main dashboard, calendar sync loop, notification setup, per-date blocks cache |
+| `app/page.tsx` | Public landing page (no auth) |
+| `app/dashboard/page.tsx` | Main dashboard, calendar sync loop, notification setup, per-date blocks cache |
 | `app/login/page.tsx` | Google sign-in page (footer links to privacy/terms) |
-| `app/settings/page.tsx` | User settings — configurable working hours |
+| `app/settings/page.tsx` | User settings — schedule preferences, calendar filtering, integrations |
 | `app/privacy/page.tsx` | Privacy Policy (public, no auth required) |
 | `app/terms/page.tsx` | Terms of Service (public, no auth required) |
 | `app/auth/callback/route.ts` | Supabase OAuth code exchange |
-| `middleware.ts` | Auth guard — redirects unauthenticated to `/login`; exempts `/privacy`, `/terms` |
+| `middleware.ts` | Auth guard — redirects unauthenticated to `/login`; exempts `/`, `/privacy`, `/terms` |
 | `app/api/tasks/create/route.ts` | LLM scheduling + task splitting + GCal event creation |
 | `app/api/tasks/batch-create/route.ts` | Batch scheduling (one LLM call for N tasks) + batch splitting |
 | `app/api/tasks/brain-dump/route.ts` | Natural language task parsing (freeform text → structured tasks) |
@@ -315,7 +367,14 @@ Use `teal-600` / `hover:teal-700` for primary buttons. Use `surface-*` for all n
 | `app/api/blocks/route.ts` | Merge manual blocks + GCal events; deduplicate task-owned events |
 | `app/api/blocks/batch/route.ts` | Bulk insert up to 90 manual calendar blocks |
 | `app/api/user/settings/route.ts` | `GET/PATCH` — read/write user working hours |
+| `app/api/user/scheduling-preferences/route.ts` | `GET/POST` — NL scheduling preferences parse + store |
+| `app/api/calendar/filter/route.ts` | `GET/POST` — calendar inclusion filter management |
+| `app/api/integrations/canvas/credentials/route.ts` | `POST/DELETE` — Canvas API token management |
+| `app/api/integrations/canvas/sync/route.ts` | `POST` — import Canvas assignments as tasks |
+| `app/api/integrations/classroom/status/route.ts` | `GET` — check Classroom scope authorization |
+| `app/api/integrations/classroom/sync/route.ts` | `POST` — import Classroom assignments as tasks |
 | `lib/googleCalendar.ts` | OAuth client, `getCalendarClient()`, `getOrCreateTimeSlotCalendar()`, `deleteCalendarEvent()` |
+| `lib/googleClassroom.ts` | `fetchUpcomingClassroomAssignments()` — Classroom API utility |
 | `lib/scheduleUtils.ts` | `fallbackSchedule()`, `findFreeBlocksInWindow()`; exports `WORK_START_HOUR`, `LATE_NIGHT_MAX_HOUR` |
 | `lib/splitSchedule.ts` | `computeSplitSessions()` — LLM + greedy fallback for splitting long tasks |
 | `lib/workHours.ts` | `fetchWorkHours()`, `formatHourForPrompt()` — per-user scheduling window |
@@ -333,6 +392,9 @@ Use `teal-600` / `hover:teal-700` for primary buttons. Use `surface-*` for all n
 | `components/TaskForm.tsx` | Structured task creation form; fixed-time pin toggle; supports `onQueue` prop for batch mode |
 | `components/TaskEditModal.tsx` | Modal to edit existing pending tasks; fixed-time toggle |
 | `components/ScheduleView.tsx` | Hourly calendar grid with task blocks + GCal overlays |
+| `components/SchedulingPreferencesInput.tsx` | Unified schedule card — NL textarea + manual time selectors |
+| `components/CanvasSettings.tsx` | Canvas LMS integration card (connect/sync/disconnect) |
+| `components/GoogleClassroomCard.tsx` | Google Classroom integration card (authorize/sync) |
 | `components/CornerTimerWidget.tsx` | Floating active timer display |
 | `components/TimerSelector.tsx` | Modal to pick which task to time |
 | `types/timer.ts` | Shared TypeScript interfaces (`TaskRow`, `TimerDisplayState`, etc.) |
@@ -341,14 +403,14 @@ Use `teal-600` / `hover:teal-700` for primary buttons. Use `surface-*` for all n
 
 Configured via `@ducanh2912/next-pwa` in `next.config.mjs`:
 - Service worker auto-generated to `public/sw.js` on build (disabled in dev)
-- Manifest at `public/manifest.json` (theme `#027381`)
-- SVG icon at `public/icon.svg` — **replace with actual PNG files** (`public/icon-192.png`, `public/icon-512.png`) for iOS and Android home-screen install; use [pwabuilder.com](https://www.pwabuilder.com/imageGenerator) to generate all sizes
+- Manifest at `public/manifest.json` (theme `#027381`, `start_url: "/dashboard"`)
+- PNG icons pre-generated in `public/icons/` (72–512px) + `public/apple-touch-icon.png`; generated from `public/icon.svg` via `scripts/generate-icons.mjs` (uses `sharp`)
 - `components/InstallPrompt.tsx` — listens to `beforeinstallprompt`, renders a dismiss-able banner (stored in `ts_install_dismissed` localStorage key); hidden when already running as standalone
-- `app/layout.tsx` exports `viewport` (themeColor, no user scaling) and `metadata.manifest`
+- `app/layout.tsx` exports `viewport` (themeColor, no user scaling) and `metadata.manifest`; icons reference `/icons/icon-192.png` and `/apple-touch-icon.png`
 
 ## Mobile layout
 
-`app/page.tsx` is responsive:
+`app/dashboard/page.tsx` is responsive:
 - **Desktop (md+):** two-column layout — 288px task list on left, schedule view on right
 - **Mobile (< md):** single-column with tab switcher (`mobileView` state: `'tasks'` | `'schedule'`)
 - **Tab bar** (`md:hidden`) renders as part of the flex column (not fixed) at the bottom of the screen
@@ -381,15 +443,15 @@ Configurable per user via `/settings` in 30-minute increments (defaults shown):
 ## Legal pages
 
 Public (no auth required) pages for Google OAuth verification:
-- `/privacy` (`app/privacy/page.tsx`) — Privacy Policy; covers data collection, Google API scope (`auth/calendar`), third-party services (Supabase, Google, OpenAI), Google API Services User Data Policy / Limited Use compliance, data retention + deletion, children's privacy
-- `/terms` (`app/terms/page.tsx`) — Terms of Service; covers service description, Google Calendar authorization, AI-powered features, acceptable use, liability, termination
+- `/privacy` (`app/privacy/page.tsx`) — Privacy Policy; covers data collection, Google API scopes (`auth/calendar`, `auth/classroom.*`), Canvas LMS data, third-party services (Supabase, Google, OpenAI), Google API Services User Data Policy / Limited Use compliance, data retention + deletion, children's privacy
+- `/terms` (`app/terms/page.tsx`) — Terms of Service; covers service description, Google Calendar authorization, Google Classroom authorization, Canvas LMS authorization, AI-powered features, acceptable use, liability, termination
 
 Links to these pages appear in:
-1. Login page footer (below the sign-in card)
-2. User avatar dropdown menu in the main app header
+1. Landing page footer (`/`)
+2. Login page footer (below the sign-in card)
+3. User avatar dropdown menu in the main app header
 
 ## Planned / future work
 
 - **Smarter batch scheduling**: Let users reorder the batch queue before submitting to influence scheduling priority
 - **Vercel deployment**: Add all env vars to Vercel project settings
-- **PWA icons**: Replace `public/icon.svg` with real PNG files (`icon-192.png`, `icon-512.png`)
