@@ -210,16 +210,29 @@ export default function CanvasSettings() {
             )}
             {syncResult && <p className="text-xs text-green-600 font-medium">{syncResult}</p>}
             {error && <p className="text-xs text-red-600">{error}</p>}
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <p className="text-xs text-surface-400">
                 Imports assignments due in the next 2 weeks.
               </p>
-              <button
-                onClick={() => void handleDisconnect()}
-                className="text-xs text-surface-400 hover:text-red-600 transition-colors"
-              >
-                Disconnect
-              </button>
+              <div className="flex items-center gap-3 flex-shrink-0">
+                <button
+                  onClick={async () => {
+                    await fetch('/api/integrations/canvas/sync', { method: 'DELETE' });
+                    setSyncResult(null);
+                    void handleSync();
+                  }}
+                  disabled={syncing}
+                  className="text-xs text-surface-400 hover:text-teal-600 transition-colors"
+                >
+                  Re-import
+                </button>
+                <button
+                  onClick={() => void handleDisconnect()}
+                  className="text-xs text-surface-400 hover:text-red-600 transition-colors"
+                >
+                  Disconnect
+                </button>
+              </div>
             </div>
           </div>
         </div>

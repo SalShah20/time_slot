@@ -237,12 +237,20 @@ export default function Home() {
 
   // ── Onboarding trigger ──────────────────────────────────────────────────────
   // Show the guided onboarding flow only for truly new users:
-  // authenticated, zero tasks, and haven't dismissed onboarding before.
+  // authenticated, zero total tasks (not just pending), and haven't dismissed before.
   useEffect(() => {
     if (loading || !user) return;
     if (localStorage.getItem('ts_onboarding_seen')) return;
-    if (tasks.length === 0) setShowOnboarding(true);
-  }, [loading, user, tasks.length]);
+    // Check total tasks (including completed) — don't show onboarding when
+    // the user has completed all their tasks
+    fetch('/api/tasks/stats')
+      .then((r) => r.json())
+      .then((stats: { total?: number }) => {
+        if ((stats.total ?? 0) === 0) setShowOnboarding(true);
+      })
+      .catch(() => { /* non-fatal */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, user]);
 
   // Re-fetch blocks whenever the viewed date changes. Pass date explicitly so the
   // AbortController in fetchBlocks can immediately cancel any prior in-flight request.

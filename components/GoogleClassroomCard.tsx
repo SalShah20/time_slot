@@ -145,9 +145,22 @@ export default function GoogleClassroomCard() {
             )}
             {syncResult && <p className="text-xs text-green-600 font-medium">{syncResult}</p>}
             {error && <p className="text-xs text-red-600">{error}</p>}
-            <p className="text-xs text-surface-400">
-              Assignments due in the next 2 weeks are imported as tasks.
-            </p>
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-surface-400">
+                Assignments due in the next 2 weeks are imported as tasks.
+              </p>
+              <button
+                onClick={async () => {
+                  await fetch('/api/integrations/classroom/sync', { method: 'DELETE' });
+                  setSyncResult(null);
+                  void handleSync();
+                }}
+                disabled={syncing}
+                className="text-xs text-surface-400 hover:text-teal-600 transition-colors whitespace-nowrap ml-2"
+              >
+                Re-import all
+              </button>
+            </div>
           </div>
         </div>
       )}

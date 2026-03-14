@@ -4,7 +4,7 @@ import { fetchUpcomingClassroomAssignments } from '@/lib/googleClassroom';
 import type { ClassroomAssignment } from '@/lib/googleClassroom';
 import { fallbackSchedule } from '@/lib/scheduleUtils';
 import type { BusyInterval } from '@/lib/scheduleUtils';
-import { fetchWorkHours } from '@/lib/workHours';
+import { fetchWorkHours, fetchUserTimezone } from '@/lib/workHours';
 import { getCalendarClient, getOrCreateTimeSlotCalendar, getPriorityColorId } from '@/lib/googleCalendar';
 import { getTagColor } from '@/lib/tagColors';
 
@@ -137,13 +137,7 @@ export async function POST() {
 
     // Load user work hours + timezone for scheduling
     const wh = await fetchWorkHours(supabase, user.id);
-    const { data: settingsRow } = await supabase
-      .from('user_tokens')
-      .select('work_timezone')
-      .eq('user_id', user.id)
-      .single();
-    const timezone = (settingsRow as { work_timezone?: string } | null)?.work_timezone
-      ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const timezone = await fetchUserTimezone(supabase, user.id) ?? 'America/Chicago';
 
     // Build busy intervals from existing tasks + calendar events for scheduling
     const now = new Date();
@@ -283,4 +277,18 @@ export async function POST() {
 
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+/** DELETE — clear import history so assignments can be re-imported on next sync. */
+export async function DELETE() {
+  const user = await getAuthUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const supabase = createSupabaseServer();
+  await supabase
+    .from('classroom_imported_assignments')
+    .delete()
+    .eq('user_id', user.id);
+
+  return NextResponse.json({ success: true });
 }

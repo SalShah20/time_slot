@@ -124,15 +124,31 @@ Examples:
     update.avoid_back_to_back = parsed.avoid_back_to_back;
   }
 
-  // Also save timezone if available
-  update.work_timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-
   const { error } = await supabase
     .from('user_tokens')
     .update(update)
     .eq('user_id', user.id);
 
   if (error) {
+    // If the column doesn't exist yet (migration 017 not run), retry without the new columns
+    if (error.message.includes('avoid_back_to_back') || error.message.includes('prefer_mornings') || error.message.includes('prefer_evenings') || error.message.includes('scheduling_')) {
+      console.warn('[scheduling-preferences] Some columns missing — saving only work hours');
+      const fallbackUpdate: Record<string, unknown> = {};
+      if (update.work_start_hour !== undefined) fallbackUpdate.work_start_hour = update.work_start_hour;
+      if (update.work_end_hour !== undefined) fallbackUpdate.work_end_hour = update.work_end_hour;
+      if (update.work_end_late_hour !== undefined) fallbackUpdate.work_end_late_hour = update.work_end_late_hour;
+
+      if (Object.keys(fallbackUpdate).length > 0) {
+        await supabase.from('user_tokens').update(fallbackUpdate).eq('user_id', user.id);
+      }
+
+      return NextResponse.json({
+        success: true,
+        parsed,
+        warning: 'Some preference columns are missing. Run migration 017_scheduling_preferences.sql to enable all features.',
+      });
+    }
+
     console.error('[scheduling-preferences] DB update error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
