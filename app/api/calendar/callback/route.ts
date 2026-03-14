@@ -69,9 +69,9 @@ export async function GET(req: NextRequest) {
       // Non-fatal — 5-min polling sync still works
     }
 
-    return NextResponse.redirect(`${appUrl}?calendar=connected`);
+    return NextResponse.redirect(`${appUrl}/dashboard?calendar=connected`);
   } catch (err) {
     console.error('[/api/calendar/callback]', err);
-    return NextResponse.redirect(`${appUrl}?calendar=error`);
+    return NextResponse.redirect(`${appUrl}/dashboard?calendar=error`);
   }
 }

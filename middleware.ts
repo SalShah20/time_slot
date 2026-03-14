@@ -26,6 +26,7 @@ export async function middleware(request: NextRequest) {
 
   // Allow unauthenticated access to public pages
   if (
+    pathname === '/' ||
     pathname.startsWith('/login') ||
     pathname.startsWith('/signup') ||
     pathname.startsWith('/auth/callback') ||
@@ -51,8 +52,9 @@ export const config = {
      * Match all request paths except:
      * - _next/static (static files)
      * - _next/image (image optimization)
-     * - favicon.ico
+     * - favicon.ico, icons, manifest, service worker
+     * - Root path / (public landing page)
      */
-    '/((?!_next/static|_next/image|favicon.ico).*)',
+    '/((?!_next/static|_next/image|favicon.ico|icon.*|manifest|sw.js|workbox.*|$).*)',
   ],
 };

@@ -173,7 +173,7 @@ export default function SettingsPage() {
       {/* Header */}
       <header className="bg-white border-b border-surface-200 px-6 py-3.5 flex items-center gap-3">
         <button
-          onClick={() => router.push('/')}
+          onClick={() => router.push('/dashboard')}
           className="w-8 h-8 flex items-center justify-center rounded-lg text-surface-400 hover:text-surface-700 hover:bg-surface-100 transition-colors"
           aria-label="Back"
         >

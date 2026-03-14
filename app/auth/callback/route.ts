@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
         }
         await supabase.from('user_tokens').upsert(tokenPayload, { onConflict: 'user_id' });
       }
-      return NextResponse.redirect(`${appUrl}/`);
+      return NextResponse.redirect(`${appUrl}/dashboard`);
     }
     console.error('[/auth/callback] exchangeCodeForSession:', error);
   }
