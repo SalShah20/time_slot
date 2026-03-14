@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
+import CanvasSettings from '@/components/CanvasSettings';
 
 function formatHalfHour(h: number): string {
   if (h === 24) return '12:00 AM';
@@ -43,6 +45,9 @@ export default function SettingsPage() {
   const [workEndHour, setWorkEndHour]             = useState(23);
   const [workEndLateHour, setWorkEndLateHour]     = useState(3);
 
+  // Premium state
+  const [isPremium, setIsPremium] = useState(false);
+
   // Calendar filter state
   const [calFilters, setCalFilters]             = useState<CalendarFilterItem[]>([]);
   const [calFiltersLoading, setCalFiltersLoading] = useState(true);
@@ -60,6 +65,19 @@ export default function SettingsPage() {
       })
       .catch(() => null)
       .finally(() => setLoading(false));
+
+    // Fetch premium status
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return;
+      supabase
+        .from('user_tokens')
+        .select('is_premium')
+        .eq('user_id', user.id)
+        .single()
+        .then(({ data }) => {
+          if ((data as { is_premium?: boolean } | null)?.is_premium) setIsPremium(true);
+        });
+    });
 
     // Fetch calendar filter list
     fetch('/api/calendar/filter')
@@ -124,6 +142,13 @@ export default function SettingsPage() {
         }),
       });
       if (!res.ok) throw new Error('Failed to save');
+      // Trigger a re-sync so excluded calendars' events are removed from the cache
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      fetch('/api/calendar/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timezone: tz }),
+      }).catch(() => { /* non-fatal background sync */ });
     } catch {
       // Revert on error
       setCalFilters((prev) =>
@@ -327,6 +352,9 @@ export default function SettingsPage() {
                 </p>
               )}
             </div>
+
+            {/* Canvas LMS card */}
+            <CanvasSettings isPremium={isPremium} />
           </>
         )}
       </div>

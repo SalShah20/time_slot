@@ -855,6 +855,11 @@ export default function Home() {
                                 {task.tag}
                               </span>
                             )}
+                            {task.source === 'canvas' && (
+                              <span className="text-xs px-1.5 py-0.5 rounded-full mt-0.5 ml-0.5 inline-block bg-orange-50 text-orange-600">
+                                Canvas
+                              </span>
+                            )}
                             {task.reminder_minutes != null && task.reminder_minutes !== 15 && (
                               <span className="text-xs text-surface-400 flex items-center gap-1 mt-0.5">
                                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

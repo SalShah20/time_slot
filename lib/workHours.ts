@@ -6,16 +6,21 @@ import { DEFAULT_WORK_HOURS } from '@/lib/scheduleUtils';
 export async function fetchWorkHours(supabase: SupabaseClient, userId: string): Promise<WorkHours> {
   const { data } = await supabase
     .from('user_tokens')
-    .select('work_start_hour, work_end_hour, work_end_late_hour')
+    .select('work_start_hour, work_end_hour, work_end_late_hour, prefer_mornings, prefer_evenings, avoid_back_to_back')
     .eq('user_id', userId)
     .single();
 
   if (!data) return DEFAULT_WORK_HOURS;
 
+  const row = data as Record<string, unknown>;
+
   return {
-    workStartHour: data.work_start_hour ?? DEFAULT_WORK_HOURS.workStartHour,
-    workEndHour: data.work_end_hour ?? DEFAULT_WORK_HOURS.workEndHour,
-    workEndLateHour: data.work_end_late_hour ?? DEFAULT_WORK_HOURS.workEndLateHour,
+    workStartHour:   (row.work_start_hour as number) ?? DEFAULT_WORK_HOURS.workStartHour,
+    workEndHour:     (row.work_end_hour as number) ?? DEFAULT_WORK_HOURS.workEndHour,
+    workEndLateHour: (row.work_end_late_hour as number) ?? DEFAULT_WORK_HOURS.workEndLateHour,
+    preferMornings:  (row.prefer_mornings as boolean) ?? false,
+    preferEvenings:  (row.prefer_evenings as boolean) ?? false,
+    avoidBackToBack: (row.avoid_back_to_back as boolean) ?? false,
   };
 }
 

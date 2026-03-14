@@ -56,10 +56,10 @@ export default function BrainDumpInput({ onTasksQueued, onSwitchToForm }: Props)
       {/* Hint above textarea */}
       <div>
         <p className="text-sm font-semibold text-teal-600">
-          One task per line — AI schedules everything automatically.
+          Just type naturally — AI extracts your tasks.
         </p>
         <p className="text-xs text-surface-500 mt-0.5">
-          Include deadlines (&ldquo;by Friday&rdquo;), duration (&ldquo;2 hours&rdquo;), or priority (&ldquo;urgent&rdquo;) — or leave them out and AI will estimate.
+          Write a paragraph, a list, or anything — include deadlines, durations, or priority if you want, or let AI estimate.
         </p>
       </div>
 
@@ -74,7 +74,7 @@ export default function BrainDumpInput({ onTasksQueued, onSwitchToForm }: Props)
               void handleSubmit();
             }
           }}
-          placeholder={"Finish CS homework by Friday 2 hours\nStudy for exam tomorrow high priority\nGym workout 1hr personal\nSubmit job app Monday work"}
+          placeholder={"I need to finish my CS homework by Friday (probably 2 hours), study for the exam tomorrow, hit the gym at some point, and I should submit that job app by Monday."}
           rows={7}
           className="w-full px-3 py-3 border border-surface-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-surface-900 placeholder:text-surface-400 resize-none leading-relaxed"
           style={{ fontSize: '16px', minHeight: '180px' }}

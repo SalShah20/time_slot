@@ -45,6 +45,7 @@ export interface TaskRow {
   is_fixed?: boolean;
   needs_rescheduling?: boolean;
   reminder_minutes?: number | null;
+  source?: string;
   session_number?: number;
   total_sessions?: number;
   parent_task_id?: string | null;

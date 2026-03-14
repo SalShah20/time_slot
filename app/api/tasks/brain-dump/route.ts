@@ -38,15 +38,15 @@ export async function POST(req: NextRequest) {
   }).format(now);
   const localDate = new Intl.DateTimeFormat('sv', { timeZone: timezone }).format(now);
 
-  const systemPrompt = `You are a task parser for a student scheduling app.
+  const systemPrompt = `You are a task parser for a college student scheduling app called TimeSlot. The user will give you text describing their tasks — it may be a messy paragraph, a bullet list, conversational sentences, or anything in between. Extract EVERY distinct task.
 
 CURRENT TIME: ${now.toISOString()} UTC = ${localTime} (${timezone})
 TODAY (local): ${localDate}
 
-Parse the user's input into structured tasks. For each task extract:
-- title (required): clear, action-oriented task name
+For each task extract:
+- title (required): concise, action-oriented task name — strip filler words
 - estimatedMinutes (optional): parse "2 hours"→120, "90 min"→90, "1.5h"→90, "30m"→30. Omit if not mentioned.
-- priority (optional): "high" for urgent/important, "low" for low priority, "medium" otherwise. Default: "medium".
+- priority (optional): "high" for urgent/important/ASAP, "low" for low priority, "medium" otherwise. Default: "medium".
 - tag (optional): one of Study, Work, Personal, Exercise, Health, Social, Errands, Other — infer from context.
 - deadline (optional): UTC ISO 8601 string. Resolve relative dates from ${localDate} in ${timezone}:
   "tomorrow" → tomorrow at 23:59 local → convert to UTC
@@ -61,13 +61,21 @@ Parse the user's input into structured tasks. For each task extract:
   Convert from local time using timezone ${timezone}.
 
 Rules:
-- One task per input line (or clearly separated phrase)
-- If multiple tasks, include all of them
+- One task per distinct action/assignment/errand mentioned — the input may be a paragraph, not line-separated
+- If a task is ambiguous, make a reasonable guess rather than skipping it
 - Only include fields you're confident about — omit rather than guess poorly
 - title must be concise but clear
 
+Example input: "I have to finish my circuits lab by Thursday, also I promised myself I'd go to the gym this week, and I need to email Professor Kim about the midterm rescheduling like ASAP"
+Example output:
+{"tasks":[
+  {"title":"Finish circuits lab","deadline":"...","priority":"medium","tag":"Study"},
+  {"title":"Go to the gym","estimatedMinutes":60,"priority":"low","tag":"Exercise"},
+  {"title":"Email Professor Kim about midterm rescheduling","estimatedMinutes":15,"priority":"high","tag":"Study"}
+]}
+
 Respond ONLY with valid JSON (no markdown):
-{"tasks":[{"title":"...","estimatedMinutes":120,"priority":"high","tag":"Study","deadline":"2026-03-07T04:59:00Z"}]}`;
+{"tasks":[{"title":"..."}]}`;
 
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {

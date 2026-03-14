@@ -7,6 +7,9 @@ export interface WorkHours {
   workStartHour: number;   // default 8  (earliest start)
   workEndHour: number;     // default 23 (end of preferred window)
   workEndLateHour: number; // default 3  (absolute latest / last resort)
+  preferMornings?: boolean;
+  preferEvenings?: boolean;
+  avoidBackToBack?: boolean;
 }
 
 export const DEFAULT_WORK_HOURS: WorkHours = {

@@ -307,8 +307,8 @@ export async function POST(req: NextRequest) {
           getTimeSlotCalendarId(supabase, user.id),
         ]);
         if (calCheck) {
-          // Freebusy across all calendars (excluding TimeSlot's own calendar)
-          const liveEvents = await fetchCalendarEventsForDay(calCheck, new Date(finalScheduledStart), timezone, tsCalId);
+          // Freebusy across included calendars (respects user's filter preferences)
+          const liveEvents = await fetchCalendarEventsForDay(calCheck, new Date(finalScheduledStart), timezone, tsCalId, supabase, user.id);
           const sStart = new Date(finalScheduledStart);
           const sEnd   = new Date(finalScheduledEnd);
           const hasOverlap = liveEvents.some((e) => e.start < sEnd && e.end > sStart);

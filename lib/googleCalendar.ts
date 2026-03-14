@@ -48,24 +48,46 @@ export async function getCalendarClient(supabase: SupabaseClient, userId: string
 }
 
 /**
- * Fetches live busy intervals for a specific local day across ALL of the user's
- * Google Calendars using the freebusy API. Excludes the dedicated TimeSlot calendar.
+ * Fetches live busy intervals for a specific local day using the freebusy API.
+ * Respects the user's calendar filter preferences (opt-out model).
+ * Always excludes the dedicated TimeSlot calendar.
  * Non-fatal — returns [] if any API call fails.
+ *
+ * @param excludeCalendarIds  IDs to always exclude (at minimum the TimeSlot calendar).
+ * @param supabase            If provided together with userId, calendar_filters are respected.
+ * @param userId              If provided together with supabase, calendar_filters are respected.
  */
 export async function fetchCalendarEventsForDay(
   calendar: ReturnType<typeof google.calendar>,
   date: Date,
   timezone: string,
   excludeCalendarId?: string,
+  supabase?: SupabaseClient,
+  userId?: string,
 ): Promise<Array<{ start: Date; end: Date }>> {
   try {
     const startOfDay = localTimeOnDay(date, 0, 0, timezone, 0);
     const endOfDay   = localTimeOnDay(date, 0, 0, timezone, 1);
 
-    // Get all calendars, exclude the TimeSlot calendar
+    // Fetch calendar list (and filters if we have supabase context)
     const calListRes = await calendar.calendarList.list();
+
+    // Build set of excluded calendar IDs from user's filter preferences
+    const excludedIds = new Set<string>();
+    if (excludeCalendarId) excludedIds.add(excludeCalendarId);
+
+    if (supabase && userId) {
+      const { data: filterRows } = await supabase
+        .from('calendar_filters')
+        .select('google_calendar_id, is_included')
+        .eq('user_id', userId);
+      for (const row of (filterRows ?? []) as Array<{ google_calendar_id: string; is_included: boolean }>) {
+        if (!row.is_included) excludedIds.add(row.google_calendar_id);
+      }
+    }
+
     const cals = (calListRes.data.items ?? []).filter(
-      (c) => c.id && c.id !== excludeCalendarId,
+      (c) => c.id && !excludedIds.has(c.id),
     );
     if (cals.length === 0) return [];
 

@@ -13,6 +13,9 @@ export const metadata: Metadata = {
     statusBarStyle: "default",
     title: "TimeSlot",
   },
+  verification: {
+    google: 'TdlQdaF94FMlS6y2z-KrippaT-7QgCyr4428UcoRPPY', // your verification code
+  },
 };
 
 export const viewport: Viewport = {

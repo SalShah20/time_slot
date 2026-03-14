@@ -444,12 +444,14 @@ export async function POST(req: NextRequest) {
           if (scheduledDay > tomorrowDay) {
             // Lazily fetch and cache live GCal events for this day
             if (!dayEventsCache.has(scheduledDay)) {
-              // Freebusy across all calendars (excluding TimeSlot's own calendar)
+              // Freebusy across included calendars (respects user's filter preferences)
               const liveEvents = await fetchCalendarEventsForDay(
                 calendarForCheck,
                 new Date(scheduled[i].scheduled_start),
                 timezone,
                 tsCalIdForCheck,
+                supabase,
+                user.id,
               );
               dayEventsCache.set(scheduledDay, liveEvents);
               augmentedBusy.push(...liveEvents);
