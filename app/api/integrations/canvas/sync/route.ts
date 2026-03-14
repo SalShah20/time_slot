@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
-import { checkPremium } from '@/lib/premium';
 import { fetchUpcomingAssignments } from '@/lib/canvasApi';
 import type { CanvasAssignment } from '@/lib/canvasApi';
 
@@ -86,10 +85,6 @@ export async function POST() {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const supabase = createSupabaseServer();
-
-  if (!(await checkPremium(supabase, user.id))) {
-    return NextResponse.json({ error: 'Canvas integration requires Premium' }, { status: 403 });
-  }
 
   // Load Canvas credentials (never leak the token in response)
   const { data: tokenRow } = await supabase

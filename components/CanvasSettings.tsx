@@ -3,11 +3,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 
-interface Props {
-  isPremium: boolean;
-}
-
-export default function CanvasSettings({ isPremium }: Props) {
+export default function CanvasSettings() {
   const [domain, setDomain]           = useState('');
   const [token, setToken]             = useState('');
   const [isConnected, setIsConnected] = useState(false);
@@ -96,25 +92,6 @@ export default function CanvasSettings({ isPremium }: Props) {
       setSyncing(false);
     }
   };
-
-  if (!isPremium) {
-    return (
-      <div className="bg-white rounded-2xl border border-dashed border-teal-300 shadow-sm p-6 text-center">
-        <div className="w-10 h-10 bg-teal-50 rounded-lg flex items-center justify-center mx-auto mb-3">
-          <svg className="w-5 h-5 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-          </svg>
-        </div>
-        <h3 className="text-sm font-semibold text-surface-900">Canvas LMS</h3>
-        <p className="text-xs text-surface-500 mt-1">
-          Auto-import assignments from Canvas. Available on Premium.
-        </p>
-        <button className="mt-3 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 transition-colors">
-          Upgrade to Premium
-        </button>
-      </div>
-    );
-  }
 
   if (loading) {
     return (

@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
 import CanvasSettings from '@/components/CanvasSettings';
 import SchedulingPreferencesInput from '@/components/SchedulingPreferencesInput';
 
@@ -46,9 +45,6 @@ export default function SettingsPage() {
   const [workEndHour, setWorkEndHour]             = useState(23);
   const [workEndLateHour, setWorkEndLateHour]     = useState(3);
 
-  // Premium state
-  const [isPremium, setIsPremium] = useState(false);
-
   // Calendar filter state
   const [calFilters, setCalFilters]             = useState<CalendarFilterItem[]>([]);
   const [calFiltersLoading, setCalFiltersLoading] = useState(true);
@@ -66,19 +62,6 @@ export default function SettingsPage() {
       })
       .catch(() => null)
       .finally(() => setLoading(false));
-
-    // Fetch premium status
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) return;
-      supabase
-        .from('user_tokens')
-        .select('is_premium')
-        .eq('user_id', user.id)
-        .single()
-        .then(({ data }) => {
-          if ((data as { is_premium?: boolean } | null)?.is_premium) setIsPremium(true);
-        });
-    });
 
     // Fetch calendar filter list
     fetch('/api/calendar/filter')
@@ -358,7 +341,7 @@ export default function SettingsPage() {
             </div>
 
             {/* Canvas LMS card */}
-            <CanvasSettings isPremium={isPremium} />
+            <CanvasSettings />
           </>
         )}
       </div>
