@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import CanvasSettings from '@/components/CanvasSettings';
+import SchedulingPreferencesInput from '@/components/SchedulingPreferencesInput';
 
 function formatHalfHour(h: number): string {
   if (h === 24) return '12:00 AM';
@@ -264,6 +265,9 @@ export default function SettingsPage() {
                 {saving ? 'Saving...' : 'Save'}
               </button>
             </div>
+
+            {/* Scheduling Preferences card (NL) */}
+            <SchedulingPreferencesInput />
 
             {/* Calendar Filtering card */}
             <div className="bg-white rounded-2xl border border-surface-200 shadow-sm p-6">

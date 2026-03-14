@@ -90,6 +90,12 @@ async function scheduleWithLLM(
     ? `\nTARGET DAY: The user specified a day — schedule on ${targetDate.toDateString()} (${new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: timezone }).format(targetDate)}). Do NOT schedule on an earlier day.`
     : '';
 
+  const prefHints: string[] = [];
+  if (wh.preferMornings) prefHints.push('The user prefers tasks in the MORNING — schedule earlier in the day when possible.');
+  if (wh.preferEvenings) prefHints.push('The user prefers tasks in the EVENING — schedule later in the day when possible.');
+  if (wh.avoidBackToBack) prefHints.push('The user wants BUFFER TIME between tasks — leave at least 20-25 minutes between tasks, not just 10.');
+  const prefSection = prefHints.length > 0 ? `\n\nUSER PREFERENCES:\n${prefHints.join('\n')}` : '';
+
   const prompt = `Schedule a task for a college student. Respond ONLY with valid JSON.
 
 TASK: "${task.title}" | ${task.estimatedMinutes} min${task.deadline ? ` | due ${task.deadline}` : ''}${task.priority ? ` | ${task.priority} priority` : ''}
@@ -116,7 +122,7 @@ RULES:
 12. If the task mentions a specific day ("on Tuesday", "by Friday", "next Monday"), ALWAYS schedule on that exact day. Never schedule on an earlier day even if time is available.
 
 Respond ONLY with this JSON (no extra text):
-{"scheduled_start":"ISO 8601 timestamp","reasoning":"one sentence"}`;
+{"scheduled_start":"ISO 8601 timestamp","reasoning":"one sentence"}${prefSection}`;
 
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {

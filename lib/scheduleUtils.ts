@@ -120,9 +120,11 @@ export function fallbackSchedule(
 ): { scheduled_start: string; scheduled_end: string } {
   const now    = new Date();
   const wh     = workHours;
-  // Pad each busy interval's end by 10 min to guarantee breathing room between tasks
+  // Pad each busy interval's end to guarantee breathing room between tasks.
+  // avoidBackToBack = true → 25 min gap (15 min extra); default → 10 min gap.
+  const padMinutes = wh.avoidBackToBack ? 25 : 10;
   const sorted = busyIntervals
-    .map((iv) => ({ start: iv.start, end: new Date(iv.end.getTime() + 10 * 60_000) }))
+    .map((iv) => ({ start: iv.start, end: new Date(iv.end.getTime() + padMinutes * 60_000) }))
     .sort((a, b) => a.start.getTime() - b.start.getTime());
 
   // If deadline is more than 5 days away, start from tomorrow at workStartHour instead
