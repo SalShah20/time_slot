@@ -953,6 +953,7 @@ export default function Home() {
         onClose={() => setShowDrawer(false)}
         onTaskCreated={handleTaskCreated}
         onTasksCreated={handleTasksCreated}
+        onRefresh={() => { void fetchTasks(); void fetchBlocks(); }}
       />
 
       {/* ── Task edit modal ────────────────────────────────────────────────── */}

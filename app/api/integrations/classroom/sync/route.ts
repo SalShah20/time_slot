@@ -279,16 +279,52 @@ export async function POST() {
   }
 }
 
-/** DELETE — clear import history so assignments can be re-imported on next sync. */
+/** DELETE — clear import history so assignments can be re-imported on next sync.
+ *  Preserves records for completed tasks to avoid duplicating them. */
 export async function DELETE() {
   const user = await getAuthUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const supabase = createSupabaseServer();
-  await supabase
+
+  // Fetch all import records with their linked task IDs
+  const { data: imports } = await supabase
     .from('classroom_imported_assignments')
-    .delete()
+    .select('id, task_id')
     .eq('user_id', user.id);
+
+  if (!imports || imports.length === 0) {
+    return NextResponse.json({ success: true });
+  }
+
+  // Find which linked tasks are completed
+  const taskIds = (imports as Array<{ id: string; task_id: string | null }>)
+    .map((r) => r.task_id)
+    .filter((id): id is string => id !== null);
+
+  let completedTaskIds = new Set<string>();
+  if (taskIds.length > 0) {
+    const { data: completed } = await supabase
+      .from('tasks')
+      .select('id')
+      .in('id', taskIds)
+      .eq('status', 'completed');
+    completedTaskIds = new Set(
+      ((completed ?? []) as Array<{ id: string }>).map((t) => t.id),
+    );
+  }
+
+  // Only delete import records whose task is NOT completed
+  const idsToDelete = (imports as Array<{ id: string; task_id: string | null }>)
+    .filter((r) => !r.task_id || !completedTaskIds.has(r.task_id))
+    .map((r) => r.id);
+
+  if (idsToDelete.length > 0) {
+    await supabase
+      .from('classroom_imported_assignments')
+      .delete()
+      .in('id', idsToDelete);
+  }
 
   return NextResponse.json({ success: true });
 }

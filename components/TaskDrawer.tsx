@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import TaskForm, { type TaskInput } from '@/components/TaskForm';
 import BrainDumpInput from '@/components/BrainDumpInput';
-// import VoiceTaskAgent from '@/components/VoiceTaskAgent'; // TODO: implement voice agent later
+import VoiceBrainDump from '@/components/VoiceBrainDump';
 import type { TaskRow } from '@/types/timer';
 
 interface Props {
@@ -11,9 +11,10 @@ interface Props {
   onClose: () => void;
   onTaskCreated: (task: TaskRow) => void;
   onTasksCreated?: (tasks: TaskRow[]) => void;
+  onRefresh?: () => void;
 }
 
-export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreated }: Props) {
+export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreated, onRefresh }: Props) {
   // batchMode = true → queue tasks then schedule all
   // batchMode = false → quick add (immediate scheduling, one task)
   const [batchMode, setBatchMode]         = useState(true);
@@ -246,8 +247,12 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
                 />
               </div>
             ) : inputMode === 'voice' ? (
-              // TODO: VoiceTaskAgent — implement later
-              <div className="px-5 py-8 text-center text-surface-500 text-sm">Voice input coming soon.</div>
+              <div className="px-5 py-4">
+                <VoiceBrainDump onTaskCreated={onRefresh} />
+                <p className="text-xs text-surface-400 text-center mt-1">
+                  Describe your task — AI will parse and schedule it.
+                </p>
+              </div>
             ) : (
               <TaskForm
                 onTaskCreated={handleTaskCreated}
