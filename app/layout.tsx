@@ -31,6 +31,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
+        <meta name="google-site-verification" content="TdlQdaF94FMlS6y2z-KrippaT-7QgCyr4428UcoRPPY" />
         <link rel="apple-touch-icon" href="/icon.svg" />
       </head>
       <body className={`${inter.className} antialiased bg-surface-50 min-h-screen`}>
