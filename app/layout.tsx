@@ -5,16 +5,20 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "TimeSlot — Smart Task Scheduler",
-  description: "Schedule your tasks. Focus on what matters.",
+  title: "TimeSlot",
+  description: "Stop forgetting. Start doing.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
     title: "TimeSlot",
   },
+  icons: {
+    icon: "/icons/icon-192.png",
+    apple: "/apple-touch-icon.png",
+  },
   verification: {
-    google: 'TdlQdaF94FMlS6y2z-KrippaT-7QgCyr4428UcoRPPY', // your verification code
+    google: 'TdlQdaF94FMlS6y2z-KrippaT-7QgCyr4428UcoRPPY',
   },
 };
 
@@ -35,7 +39,7 @@ export default function RootLayout({
     <html lang="en">
       <head>
         <meta name="google-site-verification" content="TdlQdaF94FMlS6y2z-KrippaT-7QgCyr4428UcoRPPY" />
-        <link rel="apple-touch-icon" href="/icon.svg" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
       </head>
       <body className={`${inter.className} antialiased bg-surface-50 min-h-screen`}>
         {children}
