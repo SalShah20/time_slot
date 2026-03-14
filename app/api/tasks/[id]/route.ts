@@ -24,6 +24,7 @@ export async function PATCH(
     isFixed?: boolean;
     status?: string;
     reminderMinutes?: number | null;
+    difficultyRating?: string;
   };
 
   const supabase = createSupabaseServer();
@@ -55,6 +56,7 @@ export async function PATCH(
   if (body.isFixed !== undefined)         update.is_fixed          = body.isFixed;
   if (body.status !== undefined)          update.status            = body.status;
   if (body.reminderMinutes !== undefined) update.reminder_minutes  = body.reminderMinutes;
+  if (body.difficultyRating !== undefined) update.difficulty_rating = body.difficultyRating;
 
   const newMinutes = body.estimatedMinutes ?? (existing.estimated_minutes as number);
 

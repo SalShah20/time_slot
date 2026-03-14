@@ -93,28 +93,43 @@ export default function VoiceBrainDump({ onTaskCreated }: VoiceBrainDumpProps) {
   const userTurn = isConnected && !conversation.isSpeaking;
   const showConfirmation = !isConnected && lastTask && didSaveRef.current;
 
+  const micIcon = (
+    <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
+      <path d="M12 1a4 4 0 00-4 4v7a4 4 0 008 0V5a4 4 0 00-4-4z" />
+      <path d="M19 11a7 7 0 01-14 0H3a9 9 0 008 8.94V22h2v-2.06A9 9 0 0021 11h-2z" />
+    </svg>
+  );
+  const speakerIcon = (
+    <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
+      <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0014 8.14v7.72A4.49 4.49 0 0016.5 12zM14 3.23v2.06a6.51 6.51 0 010 13.42v2.06A8.51 8.51 0 0014 3.23z" />
+    </svg>
+  );
+  const checkIcon = (
+    <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+    </svg>
+  );
+
   let buttonClass =
-    'w-20 h-20 rounded-full flex items-center justify-center text-3xl shadow-lg transition-all duration-200 select-none ';
-  let emoji = '\uD83C\uDFA4'; // 🎤
+    'w-20 h-20 rounded-full flex items-center justify-center text-white shadow-lg transition-all duration-200 select-none ';
+  let icon = micIcon;
   let statusText = 'Tap to speak your task';
 
   if (userTurn) {
-    // User speaking: pulse red
     buttonClass += 'bg-red-500 scale-110 animate-pulse';
-    emoji = '\uD83C\uDFA4'; // 🎤
+    icon = micIcon;
     statusText = 'Listening...';
   } else if (agentSpeaking) {
-    // Agent speaking: teal with ring glow
     buttonClass += 'bg-teal-600 scale-110 ring-4 ring-teal-300/50';
-    emoji = '\uD83D\uDD0A'; // 🔊
+    icon = speakerIcon;
     statusText = 'TimeSlot is talking...';
   } else if (conversation.status === 'connecting') {
     buttonClass += 'bg-teal-600 opacity-70 animate-pulse';
-    emoji = '\u23F3'; // ⏳
+    icon = micIcon;
     statusText = 'Connecting...';
   } else if (showConfirmation) {
     buttonClass += 'bg-teal-600 hover:scale-105';
-    emoji = '\u2705'; // ✅
+    icon = checkIcon;
     statusText = '';
   } else {
     buttonClass += 'bg-teal-600 hover:scale-105';
@@ -126,7 +141,7 @@ export default function VoiceBrainDump({ onTaskCreated }: VoiceBrainDumpProps) {
         onClick={isConnected ? () => void endSession() : () => void startSession()}
         className={buttonClass}
       >
-        <span className="leading-none">{emoji}</span>
+        {icon}
       </button>
       {showConfirmation ? (
         <p className="text-sm text-teal-700 font-medium text-center px-4 truncate max-w-[260px]">

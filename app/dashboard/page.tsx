@@ -48,6 +48,8 @@ export default function Home() {
   const [showCompletedModal, setShowCompletedModal] = useState(false);
   const [taskSearch, setTaskSearch]               = useState('');
   const [showOnboarding, setShowOnboarding]       = useState(false);
+  const [inlineEditId, setInlineEditId]           = useState<string | null>(null);
+  const [inlineEditValue, setInlineEditValue]     = useState('');
 
   // Derive the YYYY-MM-DD key and current blocks from the cache.
   // Using local date components (not UTC) so it aligns with how fetchBlocks queries the server.
@@ -401,6 +403,22 @@ export default function Home() {
     }
   }, [fetchTasks]);
 
+  const handleInlineSave = useCallback(async (taskId: string, newTitle: string) => {
+    const trimmed = newTitle.trim();
+    if (!trimmed) { setInlineEditId(null); return; }
+    setTasks((prev) => prev.map((t) => t.id === taskId ? { ...t, title: trimmed } : t));
+    setInlineEditId(null);
+    try {
+      await fetch(`/api/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: trimmed }),
+      });
+    } catch {
+      void fetchTasks();
+    }
+  }, [fetchTasks]);
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     router.push('/');
@@ -700,8 +718,17 @@ export default function Home() {
 
           <div className="flex-1 overflow-y-auto pb-20 md:pb-0">
             {loading ? (
-              <div className="flex items-center justify-center py-12 text-surface-400 text-sm">
-                Loading...
+              <div className="px-5 py-4 space-y-3 animate-pulse">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="flex items-start gap-2.5">
+                    <div className="w-5 h-5 rounded-full bg-surface-200 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1 space-y-1.5">
+                      <div className="h-4 bg-surface-200 rounded w-3/4" />
+                      <div className="h-3 bg-surface-100 rounded w-1/2" />
+                    </div>
+                    <div className="h-5 w-14 bg-surface-100 rounded-full flex-shrink-0" />
+                  </div>
+                ))}
               </div>
             ) : totalFiltered === 0 ? (
               <div className="text-center py-12 px-4">
@@ -829,12 +856,34 @@ export default function Home() {
                           <button
                             type="button"
                             className="flex-1 min-w-0 text-left"
-                            onClick={() => setEditingTask(task)}
-                            title="Click to edit task"
+                            onClick={() => { if (inlineEditId !== task.id) setEditingTask(task); }}
+                            title="Click to edit · Double-click title to rename"
                           >
-                            <p className={`text-sm font-medium line-clamp-2 ${isDone ? 'line-through text-surface-400' : 'text-surface-900'}`}>
-                              {task.title}
-                            </p>
+                            {inlineEditId === task.id ? (
+                              <input
+                                autoFocus
+                                className="text-sm font-medium text-surface-900 w-full bg-white border border-teal-400 rounded px-1.5 py-0.5 outline-none ring-1 ring-teal-300"
+                                value={inlineEditValue}
+                                onChange={(e) => setInlineEditValue(e.target.value)}
+                                onBlur={() => void handleInlineSave(task.id, inlineEditValue)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') { e.preventDefault(); void handleInlineSave(task.id, inlineEditValue); }
+                                  if (e.key === 'Escape') setInlineEditId(null);
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            ) : (
+                              <p
+                                className={`text-sm font-medium line-clamp-2 ${isDone ? 'line-through text-surface-400' : 'text-surface-900'}`}
+                                onDoubleClick={(e) => {
+                                  e.stopPropagation();
+                                  setInlineEditId(task.id);
+                                  setInlineEditValue(task.title);
+                                }}
+                              >
+                                {task.title}
+                              </p>
+                            )}
                             {task.is_fixed && (
                               <span className="text-xs text-teal-600 flex items-center gap-1">
                                 <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">

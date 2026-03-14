@@ -24,12 +24,18 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
   const [submitting, setSubmitting]       = useState(false);
   const [batchError, setBatchError]       = useState<string | null>(null);
 
-  // Close on Escape
+  // Close on Escape, Cmd/Ctrl+Enter to schedule queued tasks
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && batchMode && queue.length > 0 && !submitting) {
+        e.preventDefault();
+        void handleScheduleAll();
+      }
+    };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [onClose]);
+  }, [onClose, batchMode, queue.length, submitting]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset state when drawer closes
   useEffect(() => {
@@ -284,7 +290,14 @@ export default function TaskDrawer({ open, onClose, onTaskCreated, onTasksCreate
                 ? 'Scheduling…'
                 : queue.length === 0
                 ? 'Parse or add tasks above'
-                : `Schedule All (${queue.length})`}
+                : (
+                  <>
+                    Schedule All ({queue.length})
+                    <kbd className="ml-2 text-xs opacity-60 hidden sm:inline">
+                      {typeof navigator !== 'undefined' && /Mac/i.test(navigator.userAgent) ? '⌘' : 'Ctrl'}+↵
+                    </kbd>
+                  </>
+                )}
             </button>
           </div>
         )}

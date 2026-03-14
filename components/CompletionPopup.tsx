@@ -38,11 +38,27 @@ interface Props {
 
 export default function CompletionPopup({ stats, onDismiss, onStartNewTask }: Props) {
   const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
+  const [saved, setSaved] = useState(false);
 
   if (!stats) return null;
 
   const { taskId, taskTitle, estimatedMinutes, actualWorkSeconds, totalBreakSeconds } = stats;
   const motivational = MOTIVATIONAL[hashId(taskId) % 5];
+
+  const handleDifficulty = async (d: Difficulty) => {
+    setDifficulty(d);
+    setSaved(false);
+    try {
+      await fetch(`/api/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ difficultyRating: d }),
+      });
+      setSaved(true);
+    } catch {
+      // non-fatal
+    }
+  };
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -89,7 +105,7 @@ export default function CompletionPopup({ stats, onDismiss, onStartNewTask }: Pr
             ).map((opt) => (
               <button
                 key={opt.value}
-                onClick={() => setDifficulty(opt.value)}
+                onClick={() => void handleDifficulty(opt.value)}
                 className={`flex-1 py-2 text-xs font-medium rounded-lg border transition-colors ${
                   difficulty === opt.value ? opt.active : opt.bg
                 }`}
@@ -98,6 +114,9 @@ export default function CompletionPopup({ stats, onDismiss, onStartNewTask }: Pr
               </button>
             ))}
           </div>
+          {saved && (
+            <p className="text-xs text-surface-400 mt-1.5">Saved — future estimates will adjust.</p>
+          )}
         </div>
 
         {/* Actions */}

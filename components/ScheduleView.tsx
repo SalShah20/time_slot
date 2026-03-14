@@ -446,8 +446,19 @@ export default function ScheduleView({
       {/* Scrollable grid */}
       <div className="flex-1 overflow-y-auto pb-16" ref={gridRef}>
         {loading ? (
-          <div className="flex items-center justify-center py-20 text-surface-400 text-sm">
-            Loading schedule…
+          <div className="mx-4 mt-2 animate-pulse space-y-0">
+            {Array.from({ length: 12 }, (_, i) => (
+              <div key={i} className="flex items-start border-t border-surface-100" style={{ height: '60px' }}>
+                <div className="w-12 flex-shrink-0 pt-1">
+                  <div className="h-3 w-8 bg-surface-200 rounded" />
+                </div>
+                <div className="flex-1 relative">
+                  {i % 3 === 1 && (
+                    <div className="absolute inset-x-1 top-1 bottom-1 bg-teal-100/60 rounded-lg" />
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         ) : (
           <>

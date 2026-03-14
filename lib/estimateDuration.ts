@@ -78,8 +78,16 @@ export async function estimateDurationWithLLM(
   if (supabase && userId && tag) {
     const historical = await getHistoricalDuration(supabase, userId, tag);
     if (historical !== null) {
-      console.log(`[estimateDuration] "${title}" → ${historical}m (historical median, tag: ${tag})`);
-      return { minutes: historical, source: 'historical' };
+      // Apply difficulty multiplier if user consistently rates this tag as harder/easier
+      const history = await fetchUserTimingHistory(supabase, userId);
+      const mult = history.tagDifficultyMultiplier[tag] ?? 1;
+      const adjusted = Math.round(historical * mult);
+      if (mult !== 1) {
+        console.log(`[estimateDuration] "${title}" → ${adjusted}m (historical ${historical}m × ${mult} difficulty, tag: ${tag})`);
+      } else {
+        console.log(`[estimateDuration] "${title}" → ${adjusted}m (historical median, tag: ${tag})`);
+      }
+      return { minutes: adjusted, source: 'historical' };
     }
   }
 
@@ -113,6 +121,17 @@ export async function estimateDurationWithLLM(
         const diff = t.actualMinutes - t.estimatedMinutes;
         const diffStr = diff > 0 ? `+${diff}` : String(diff);
         lines.push(`  "${t.title}"${t.tag ? ` [${t.tag}]` : ''}: ${t.actualMinutes} min (est was ${t.estimatedMinutes}, ${diffStr})`);
+      }
+    }
+
+    // Add difficulty bias info
+    const diffs = Object.entries(history.tagDifficultyMultiplier);
+    if (diffs.length > 0) {
+      lines.push("Difficulty adjustment multipliers (from user's self-reported ratings):");
+      for (const [t, mult] of diffs) {
+        const pct = Math.round((mult - 1) * 100);
+        const dir = pct > 0 ? `+${pct}% (tasks take longer)` : `${pct}% (tasks take less time)`;
+        lines.push(`  ${t}: ${dir}`);
       }
     }
 
