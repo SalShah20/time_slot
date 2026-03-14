@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 import { getAuthUser, createSupabaseServer } from '@/lib/supabase-server';
 import { fetchUpcomingAssignments } from '@/lib/canvasApi';
 import type { CanvasAssignment } from '@/lib/canvasApi';
+import { fallbackSchedule } from '@/lib/scheduleUtils';
+import type { BusyInterval } from '@/lib/scheduleUtils';
+import { fetchWorkHours } from '@/lib/workHours';
+import { getCalendarClient, getOrCreateTimeSlotCalendar, getPriorityColorId } from '@/lib/googleCalendar';
+import { getTagColor } from '@/lib/tagColors';
 
 /**
  * Estimate duration for a batch of assignments via GPT-4o-mini.
@@ -128,11 +133,68 @@ export async function POST() {
     // Estimate durations via LLM
     const estimateMap = await estimateAssignmentDurations(newAssignments);
 
+    // Load user work hours + timezone for scheduling
+    const wh = await fetchWorkHours(supabase, user.id);
+    const { data: settingsRow } = await supabase
+      .from('user_tokens')
+      .select('work_timezone')
+      .eq('user_id', user.id)
+      .single();
+    const timezone = (settingsRow as { work_timezone?: string } | null)?.work_timezone
+      ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    // Build busy intervals from existing tasks + calendar events for scheduling
+    const now = new Date();
+    const windowEnd = new Date(now);
+    windowEnd.setDate(windowEnd.getDate() + 14);
+
+    const [{ data: existingTasks }, { data: calEvents }] = await Promise.all([
+      supabase
+        .from('tasks')
+        .select('scheduled_start, scheduled_end')
+        .eq('user_id', user.id)
+        .not('status', 'in', '("completed","cancelled")')
+        .not('scheduled_start', 'is', null)
+        .gte('scheduled_start', now.toISOString())
+        .lt('scheduled_start', windowEnd.toISOString()),
+      supabase
+        .from('calendar_events')
+        .select('start_time, end_time')
+        .eq('user_id', user.id)
+        .gte('start_time', now.toISOString())
+        .lt('start_time', windowEnd.toISOString()),
+    ]);
+
+    const busyIntervals: BusyInterval[] = [
+      ...((existingTasks ?? []) as Array<{ scheduled_start: string; scheduled_end: string }>)
+        .filter((t) => t.scheduled_start && t.scheduled_end)
+        .map((t) => ({ start: new Date(t.scheduled_start), end: new Date(t.scheduled_end) })),
+      ...((calEvents ?? []) as Array<{ start_time: string; end_time: string }>)
+        .map((e) => ({ start: new Date(e.start_time), end: new Date(e.end_time) })),
+    ];
+
+    // Try to get GCal client for event creation
+    const calendar = await getCalendarClient(supabase, user.id);
+    let tsCalendarId: string | null = null;
+    if (calendar) {
+      try {
+        tsCalendarId = await getOrCreateTimeSlotCalendar(supabase, user.id, calendar);
+      } catch { /* non-fatal */ }
+    }
+
     // Insert tasks + import records
     const createdTasks: Array<Record<string, unknown>> = [];
 
     for (const assignment of newAssignments) {
       const estimatedMinutes = estimateMap.get(assignment.name) ?? 60;
+
+      // Schedule the task
+      const slot = fallbackSchedule(busyIntervals, estimatedMinutes, assignment.due_at ?? undefined, timezone, wh);
+      const scheduledStart = slot.scheduled_start;
+      const scheduledEnd = slot.scheduled_end;
+
+      // Add this slot to busy intervals so subsequent tasks don't overlap
+      busyIntervals.push({ start: new Date(scheduledStart), end: new Date(scheduledEnd) });
 
       const { data: task, error: insertErr } = await supabase
         .from('tasks')
@@ -143,15 +205,42 @@ export async function POST() {
           tag: 'Study',
           estimated_minutes: estimatedMinutes,
           deadline: assignment.due_at,
+          scheduled_start: scheduledStart,
+          scheduled_end: scheduledEnd,
           status: 'pending',
           source: 'canvas',
         })
-        .select('id, title, estimated_minutes, deadline, scheduled_start, status, source')
+        .select('id, title, estimated_minutes, deadline, scheduled_start, scheduled_end, status, source')
         .single();
 
       if (insertErr) {
         console.warn(`[canvas/sync] Failed to insert task for "${assignment.name}":`, insertErr);
         continue;
+      }
+
+      // Create GCal event (non-fatal)
+      if (calendar && tsCalendarId) {
+        try {
+          const tagColor = getTagColor('Study');
+          const event = await calendar.events.insert({
+            calendarId: tsCalendarId,
+            requestBody: {
+              summary: assignment.name,
+              description: assignment.course_name ? `Course: ${assignment.course_name}` : undefined,
+              start: { dateTime: scheduledStart },
+              end: { dateTime: scheduledEnd },
+              colorId: tagColor?.gcalColorId ?? getPriorityColorId(null),
+            },
+          });
+          if (event.data.id) {
+            await supabase
+              .from('tasks')
+              .update({ google_event_id: event.data.id })
+              .eq('id', task.id);
+          }
+        } catch {
+          /* non-fatal */
+        }
       }
 
       await supabase.from('canvas_imported_assignments').insert({
